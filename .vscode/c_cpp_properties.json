@@ -1,0 +1,32 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-x64"
+        },
+        {
+            "name": "RT-Smart",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/ubuntu/k230_sdk/src/big/rt-smart/userapps",
+                "/home/ubuntu/k230_sdk/src/big/rt-smart/userapps/sdk/**",
+                "/home/ubuntu/k230_sdk/src/big/mpp/include",
+                "/home/ubuntu/k230_sdk/src/big/mpp/include/comm",
+                "/home/ubuntu/k230_sdk/src/big/mpp/include/ioctl",
+                "/home/ubuntu/k230_sdk/src/big/mpp/userapps/api"
+            ],
+            "defines": [],
+            "compilerPath": "/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin/riscv64-unknown-linux-musl-gcc",
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-x64"
+        }    ],
+    "version": 4
+}

@@ -1,0 +1,18 @@
+from building import *
+
+cwd = GetCurrentDir()
+
+#src = Glob('*.c') #将所有代码都合成一个可执行文件
+
+# --- 白名单设置 ---
+# 只有在这里列出的文件会被编译
+src = [
+    'hello.c',
+    # 'old_hello.c'  <-- 这一行被注释掉了，编译器会完全无视它
+]
+
+CPPPATH = [cwd]
+
+# 这里的 'big_app' 必须与你软链接设定的名字一致
+group = DefineGroup('big_app', src, depend=[''], CPPPATH=CPPPATH)
+Return('group')

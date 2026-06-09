@@ -12,6 +12,8 @@ src = [
     'vicap_module.c',
     'bind_module.c',
     'cleanup_module.c',
+    'stream_export.c',
+    'osd_module.c',
 ]
 
 # --- MPP 头文件路径 ---

@@ -19,6 +19,7 @@
 #include "mpi_sys_api.h"
 #include "mpi_vicap_api.h"
 #include "k_venc_comm.h"
+#include "mpp_types.h"
 
 /* GC2093 传感器 (开发板标注 TYS-2093-V31)
  * SDK 示例和多数 K230 板卡把 GC2093 接在 CSI2；CSI0 配置会在 kd_mpi_vicap_init()
@@ -48,6 +49,10 @@
 
 /* 自动退出时间 (秒) */
 #define AUTO_EXIT_SEC   600
+
+/* VENC 码流线程配置 */
+#define VENC_MAX_PACKS                 MPP_MAX_STREAM_PACKS
+#define VENC_GET_STREAM_TIMEOUT_MS     200
 
 /* 通道 ID */
 #define VENC_CHN    0
@@ -87,5 +92,13 @@ k_s32 vi_bind_venc(void);
 k_s32 vicap_start(void);
 void *stream_thread(void *arg);
 void pipeline_cleanup(void);
+
+k_s32 stream_export_init(stream_export_mode mode);
+k_s32 stream_export_submit(const mpp_stream_frame_desc *frame);
+void stream_export_deinit(void);
+
+k_s32 osd_init(void);
+k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms);
+void osd_deinit(void);
 
 #endif /* MPP_PIPELINE_H */

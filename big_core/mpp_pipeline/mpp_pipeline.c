@@ -1,5 +1,5 @@
 /*
- * K230 MPP Pipeline MVP — Week 1 队长任务
+ * K230 MPP Pipeline MVP — Week 2 队长任务
  *
  * 单进程多线程验证硬件管线:
  *   Sensor(GC2093) -> VICAP(1080P,NV12) -> [sys_bind] -> VENC(H.265,CBR,15fps)
@@ -32,7 +32,7 @@ int main(void)
 
     printf("\n");
     printf("========================================\n");
-    printf("  K230 MPP Pipeline MVP — Week 1\n");
+    printf("  K230 MPP Pipeline MVP — Week 2\n");
     printf("  Sensor: GC2093(auto CSI)  Codec: H.265 CBR\n");
     printf("  Resolution: %dx%d@%dfps\n", ENC_WIDTH, ENC_HEIGHT, DST_FPS);
     printf("  Acceptance: 15fps NALU print, 10min stable\n");
@@ -50,6 +50,9 @@ int main(void)
     ret = venc_init(VENC_CHN, ENC_BITRATE);
     if (ret) goto cleanup;
 
+    ret = osd_init();
+    if (ret) goto cleanup;
+
     /* Step 3: VICAP 摄像头配置 (GC2093) */
     ret = vicap_config(SENSOR_TYPE);
     if (ret) goto cleanup;
@@ -60,6 +63,9 @@ int main(void)
 
     /* Step 5: 启动 VICAP 流 */
     ret = vicap_start();
+    if (ret) goto cleanup;
+
+    ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
     if (ret) goto cleanup;
 
     g_status = STATUS_RUNNING;

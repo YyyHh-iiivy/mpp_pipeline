@@ -81,61 +81,86 @@ void *stream_thread(void *arg)
 {
     k_u32 chn = (k_u32)(k_u64)arg;              // 将传入参数转换为通道号
     k_venc_stream output;                        // 存储编码后的码流数据
+    k_venc_pack packs[VENC_MAX_PACKS];           // 固定 pack 缓冲，避免每帧动态分配
     k_s32 ret;                                  // 返回值，用于存储API调用结果
     k_u32 frame_count = 0;                      // 总帧计数器，统计接收到的所有非头部帧
     k_u32 total_bytes = 0;                      // 总字节数计数器
     time_t start_time, last_log;                // 开始时间戳和上次日志记录时间戳
     k_u32 interval_frames = 0;                  // 区间帧计数器，用于计算区间内的帧率
+    k_u32 query_fail_count = 0;                 // 查询失败计数，用于限制日志频率
+    k_u32 get_fail_count = 0;                   // get_stream失败计数，用于限制日志频率
 
     LOG("Stream thread started, chn=%u, waiting for NALUs...", chn);  // 记录线程启动日志
+    LOG("Stream export mode: local-log, timeout=%dms, max_packs=%d",
+        VENC_GET_STREAM_TIMEOUT_MS, VENC_MAX_PACKS);
     start_time = last_log = time(NULL);         // 记录开始时间和上次日志时间
+    memset(&output, 0, sizeof(output));
+    output.pack = packs;
 
     while (g_running) {                         // 当程序正在运行时持续循环
         k_venc_chn_status status;               // VENC通道状态结构体
+        mpp_stream_frame_desc frame;            // 大核码流出口描述
 
         /* 查询当前有多少个 pack */
         ret = kd_mpi_venc_query_status(chn, &status);  // 查询VENC通道的状态
         if (ret) {                              // 检查查询是否成功
-            LOG("kd_mpi_venc_query_status failed! ret=0x%x", ret);  // 记录错误日志
+            if (!g_running)
+                break;
+            if ((query_fail_count++ % 25) == 0)
+                LOG("kd_mpi_venc_query_status failed! ret=0x%x", ret);  // 记录错误日志
             usleep(50000);                      // 休眠50毫秒后重试
             continue;                           // 继续下一轮循环
         }
+        query_fail_count = 0;
 
-        output.pack_cnt = (status.cur_packs > 0) ? status.cur_packs : 1;  // 设置包数量
-        output.pack = malloc(sizeof(k_venc_pack) * output.pack_cnt);  // 分配内存存储编码包
-        if (!output.pack) {                     // 检查内存分配是否成功
-            LOG("malloc for venc pack failed!");  // 记录内存分配失败日志
-            usleep(50000);                      // 休眠50毫秒后重试
-            continue;                           // 继续下一轮循环
-        }
+        memset(packs, 0, sizeof(packs));
+        memset(&output, 0, sizeof(output));
+        output.pack = packs;
+        output.pack_cnt = status.cur_packs;      // 设置包数量
+        if (output.pack_cnt == 0)
+            output.pack_cnt = 1;
+        if (output.pack_cnt > VENC_MAX_PACKS)
+            output.pack_cnt = VENC_MAX_PACKS;
 
-        /* 阻塞等待编码完成 */
-        ret = kd_mpi_venc_get_stream(chn, &output, -1);  // 阻塞获取编码后的码流，-1表示无限期等待
+        /* 有限等待编码完成，保证 Ctrl+C 和自动退出能回收线程 */
+        ret = kd_mpi_venc_get_stream(chn, &output, VENC_GET_STREAM_TIMEOUT_MS);
         if (ret) {                              // 检查获取码流是否成功
-            if (g_running)                      // 如果程序仍在运行
-                LOG("kd_mpi_venc_get_stream failed! ret=0x%x", ret);  // 记录错误日志
-            free(output.pack);                  // 释放之前分配的内存
-            break;                              // 跳出循环结束线程
+            if (!g_running)                      // 如果程序准备退出
+                break;                           // 跳出循环结束线程
+            if ((get_fail_count++ % 25) == 0)
+                LOG("kd_mpi_venc_get_stream timeout/no stream ret=0x%x", ret);
+            continue;                            // 暂时无流时继续等待
         }
+        get_fail_count = 0;
+
+        memset(&frame, 0, sizeof(frame));
+        frame.chn = chn;
+        frame.pack_cnt = output.pack_cnt;
+        if (output.pack_cnt > 0)
+            frame.pts = output.pack[0].pts;
 
         /* 遍历所有 pack, 只统计非 header 的数据帧 */
         for (k_u32 i = 0; i < output.pack_cnt; i++) {  // 遍历所有编码包
+            frame.packs[i].phys_addr = output.pack[i].phys_addr;
+            frame.packs[i].virt_addr = 0;
+            frame.packs[i].len = output.pack[i].len;
+            frame.packs[i].type = output.pack[i].type;
+
             if (output.pack[i].type != K_VENC_HEADER) {  // 检查是否为非头部帧（即实际数据帧）
                 frame_count++;                  // 增加总帧计数
                 interval_frames++;              // 增加区间帧计数
                 total_bytes += output.pack[i].len;  // 累加数据长度
-                LOG("Get NALU, Size: %u bytes  [frame #%u]", output.pack[i].len, frame_count);  // 记录获取到数据帧的日志
-            } else {                            // 如果是头部帧（SPS/PPS）
-                LOG("Get NALU (SPS/PPS header), Size: %u bytes", output.pack[i].len);  // 记录头部帧信息
             }
         }
+
+        ret = stream_export_submit(&frame);
+        if (ret)
+            LOG("stream_export_submit failed! ret=0x%x", ret);
 
         ret = kd_mpi_venc_release_stream(chn, &output);  // 释放已获取的码流资源
         if (ret) {                              // 检查释放操作是否成功
             LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);  // 记录错误日志
         }
-
-        free(output.pack);                      // 释放动态分配的内存
 
         /* 每 150 帧统计一次帧率；15fps 时约 10 秒，30fps 时约 5 秒 */
         if (interval_frames >= 150) {           // 当区间帧数达到150时进行统计

@@ -11,6 +11,8 @@ void pipeline_cleanup(void)
     k_s32 ret;
 
     LOG("Cleanup: current status=%d", g_status);
+    stream_export_deinit();
+    osd_deinit();
 
     /* 5. 停 VICAP 流 */
     if (g_status >= STATUS_STREAM_STARTED) {

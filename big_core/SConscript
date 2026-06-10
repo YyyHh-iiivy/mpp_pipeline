@@ -33,6 +33,7 @@ CPPPATH = [
 MPP_LIB_PATH = os.path.join(MPP_INC, 'userapps/lib')
 lib_files = glob.glob(os.path.join(MPP_LIB_PATH, 'lib*.a'))
 LIBS = [os.path.basename(f)[3:-2] for f in sorted(lib_files)]
+# MPP SDK 静态库内部引用 pthread_* 符号；应用层线程使用 RT-Thread API。
 LIBS += ['pthread', 'm']
 
 LIBPATH = [MPP_LIB_PATH]

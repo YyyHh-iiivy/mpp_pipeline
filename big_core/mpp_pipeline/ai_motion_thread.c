@@ -1,10 +1,11 @@
 #include "mpp_pipeline.h"
 
-static pthread_t g_ai_motion_tid;
+static rt_thread_t g_ai_motion_tid = RT_NULL;
+static rt_sem_t g_ai_motion_exit_sem = RT_NULL;
 static volatile int g_ai_motion_running;
 static k_bool g_ai_motion_started;
 
-static void *ai_motion_thread(void *arg)
+static void ai_motion_thread(void *arg)
 {
     k_u32 timeout_count = 0;
     k_u32 frame_count = 0;
@@ -23,7 +24,7 @@ static void *ai_motion_thread(void *arg)
         if (ret) {
             if ((timeout_count++ % 100) == 0)
                 LOG("AI frame dump timeout/no frame ret=0x%x", ret);
-            usleep(10000);
+            rt_thread_mdelay(10);
             continue;
         }
         timeout_count = 0;
@@ -47,7 +48,8 @@ static void *ai_motion_thread(void *arg)
     }
 
     LOG("AI motion thread stopped, frames=%u", frame_count);
-    return NULL;
+    if (g_ai_motion_exit_sem != RT_NULL)
+        rt_sem_release(g_ai_motion_exit_sem);
 }
 
 k_s32 ai_motion_thread_start(void)
@@ -67,11 +69,39 @@ k_s32 ai_motion_thread_start(void)
         return ret;
     }
 
+    g_ai_motion_exit_sem = rt_sem_create("aidone", 0, RT_IPC_FLAG_FIFO);
+    if (g_ai_motion_exit_sem == RT_NULL) {
+        LOG("rt_sem_create(aidone) failed!");
+        motion_adapter_deinit();
+        ai_frame_channel_deinit();
+        return -1;
+    }
+
     g_ai_motion_running = 1;
-    ret = pthread_create(&g_ai_motion_tid, NULL, ai_motion_thread, NULL);
-    if (ret) {
-        LOG("AI pthread_create failed! ret=%d", ret);
+    g_ai_motion_tid = rt_thread_create("ai_motion",
+                                       ai_motion_thread,
+                                       RT_NULL,
+                                       AI_THREAD_STACK_SIZE,
+                                       AI_THREAD_PRIORITY,
+                                       AI_THREAD_TIMESLICE);
+    if (g_ai_motion_tid == RT_NULL) {
+        LOG("rt_thread_create(ai_motion) failed!");
         g_ai_motion_running = 0;
+        rt_sem_delete(g_ai_motion_exit_sem);
+        g_ai_motion_exit_sem = RT_NULL;
+        motion_adapter_deinit();
+        ai_frame_channel_deinit();
+        return -1;
+    }
+
+    ret = rt_thread_startup(g_ai_motion_tid);
+    if (ret != RT_EOK) {
+        LOG("rt_thread_startup(ai_motion) failed! ret=%d", ret);
+        g_ai_motion_running = 0;
+        rt_thread_delete(g_ai_motion_tid);
+        g_ai_motion_tid = RT_NULL;
+        rt_sem_delete(g_ai_motion_exit_sem);
+        g_ai_motion_exit_sem = RT_NULL;
         motion_adapter_deinit();
         ai_frame_channel_deinit();
         return ret;
@@ -88,7 +118,13 @@ void ai_motion_thread_stop(void)
         return;
 
     g_ai_motion_running = 0;
-    pthread_join(g_ai_motion_tid, NULL);
+    if (g_ai_motion_exit_sem != RT_NULL) {
+        k_s32 ret = rt_sem_take(g_ai_motion_exit_sem, RT_WAITING_FOREVER);
+        CHECK_RET(ret, __func__, __LINE__);
+        rt_sem_delete(g_ai_motion_exit_sem);
+        g_ai_motion_exit_sem = RT_NULL;
+    }
+    g_ai_motion_tid = RT_NULL;
     g_ai_motion_started = K_FALSE;
 
     motion_adapter_deinit();

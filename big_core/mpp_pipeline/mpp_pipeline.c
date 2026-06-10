@@ -13,7 +13,8 @@
 
 volatile int g_running = 1;
 pipeline_status g_status = STATUS_IDLE;
-pthread_t g_stream_tid;
+rt_thread_t g_stream_tid = RT_NULL;
+rt_sem_t g_stream_exit_sem = RT_NULL;
 
 /* ================================================================
  * 信号处理 — 安全退出
@@ -75,10 +76,35 @@ int main(void)
 
     g_status = STATUS_RUNNING;
 
-    /* Step 5: 创建码流采集线程 */
-    ret = pthread_create(&g_stream_tid, NULL, stream_thread, (void *)(k_u64)VENC_CHN);
-    if (ret) {
-        LOG("pthread_create failed! ret=%d", ret);
+    /* Step 6: 创建 RT-Thread 码流采集线程 */
+    g_stream_exit_sem = rt_sem_create("strdone", 0, RT_IPC_FLAG_FIFO);
+    if (g_stream_exit_sem == RT_NULL) {
+        LOG("rt_sem_create(strdone) failed!");
+        ret = -1;
+        goto cleanup;
+    }
+
+    g_stream_tid = rt_thread_create("mpp_str",
+                                    stream_thread,
+                                    (void *)(k_u64)VENC_CHN,
+                                    STREAM_THREAD_STACK_SIZE,
+                                    STREAM_THREAD_PRIORITY,
+                                    STREAM_THREAD_TIMESLICE);
+    if (g_stream_tid == RT_NULL) {
+        LOG("rt_thread_create(mpp_str) failed!");
+        rt_sem_delete(g_stream_exit_sem);
+        g_stream_exit_sem = RT_NULL;
+        ret = -1;
+        goto cleanup;
+    }
+
+    ret = rt_thread_startup(g_stream_tid);
+    if (ret != RT_EOK) {
+        LOG("rt_thread_startup(mpp_str) failed! ret=%d", ret);
+        rt_thread_delete(g_stream_tid);
+        g_stream_tid = RT_NULL;
+        rt_sem_delete(g_stream_exit_sem);
+        g_stream_exit_sem = RT_NULL;
         goto cleanup;
     }
 
@@ -88,7 +114,7 @@ int main(void)
     {
         time_t start = time(NULL);
         while (g_running && difftime(time(NULL), start) < AUTO_EXIT_SEC) {
-            sleep(1);
+            rt_thread_mdelay(1000);
         }
         if (g_running) {
             LOG("Auto-exit after %d seconds.", AUTO_EXIT_SEC);
@@ -96,8 +122,14 @@ int main(void)
         }
     }
 
-    /* 等待采集线程退出 */
-    pthread_join(g_stream_tid, NULL);
+    /* 等待 RT 采集线程自然退出 */
+    if (g_stream_exit_sem != RT_NULL) {
+        ret = rt_sem_take(g_stream_exit_sem, RT_WAITING_FOREVER);
+        CHECK_RET(ret, __func__, __LINE__);
+        rt_sem_delete(g_stream_exit_sem);
+        g_stream_exit_sem = RT_NULL;
+    }
+    g_stream_tid = RT_NULL;
 
 cleanup:
     pipeline_cleanup();

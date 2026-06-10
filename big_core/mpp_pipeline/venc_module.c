@@ -77,7 +77,7 @@ k_s32 venc_init(k_u32 chn, k_u32 bitrate)
  * @param arg 传入的参数，转换为通道号
  * @return void* 线程返回值（始终为NULL）
  */
-void *stream_thread(void *arg)
+void stream_thread(void *arg)
 {
     k_u32 chn = (k_u32)(k_u64)arg;              // 将传入参数转换为通道号
     k_venc_stream output;                        // 存储编码后的码流数据
@@ -108,7 +108,7 @@ void *stream_thread(void *arg)
                 break;
             if ((query_fail_count++ % 25) == 0)
                 LOG("kd_mpi_venc_query_status failed! ret=0x%x", ret);  // 记录错误日志
-            usleep(50000);                      // 休眠50毫秒后重试
+            rt_thread_mdelay(50);               // 休眠50毫秒后重试
             continue;                           // 继续下一轮循环
         }
         query_fail_count = 0;
@@ -180,5 +180,6 @@ void *stream_thread(void *arg)
         frame_count, total_bytes, total_elapsed,  // 输出总计信息：总帧数、总字节数、总时间
         total_elapsed > 0 ? frame_count / total_elapsed : 0);  // 计算平均帧率
 
-    return NULL;                                // 返回空指针作为线程退出值
+    if (g_stream_exit_sem != RT_NULL)
+        rt_sem_release(g_stream_exit_sem);
 }

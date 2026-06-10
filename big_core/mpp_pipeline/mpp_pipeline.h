@@ -3,11 +3,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <pthread.h>
 #include <signal.h>
 #include <time.h>
+
+#include <rtthread.h>
 
 #include "k_module.h"
 #include "k_type.h"
@@ -72,6 +72,14 @@
 #define VENC_GET_STREAM_TIMEOUT_MS     200
 #define AI_FRAME_DUMP_TIMEOUT_MS       50
 
+/* RT-Thread 线程配置: 数值越小优先级越高 */
+#define STREAM_THREAD_STACK_SIZE       16384
+#define STREAM_THREAD_PRIORITY         20
+#define STREAM_THREAD_TIMESLICE        10
+#define AI_THREAD_STACK_SIZE           16384
+#define AI_THREAD_PRIORITY             22
+#define AI_THREAD_TIMESLICE            10
+
 /* 通道 ID */
 #define VENC_CHN    0
 #define VICAP_DEV   VICAP_DEV_ID_0
@@ -93,7 +101,8 @@ typedef enum {
 
 extern volatile int g_running;
 extern pipeline_status g_status;
-extern pthread_t g_stream_tid;
+extern rt_thread_t g_stream_tid;
+extern rt_sem_t g_stream_exit_sem;
 
 #define CHECK_RET(ret, func, line)  do { \
     if (ret) \
@@ -109,7 +118,7 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type);
 k_s32 vicap_config(k_vicap_sensor_type sensor_type);
 k_s32 vi_bind_venc(void);
 k_s32 vicap_start(void);
-void *stream_thread(void *arg);
+void stream_thread(void *arg);
 void pipeline_cleanup(void);
 
 k_s32 stream_export_init(stream_export_mode mode);

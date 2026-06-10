@@ -38,6 +38,7 @@
 /* VB 池配置 */
 #define INPUT_BUF_CNT   6
 #define OUTPUT_BUF_CNT  15
+#define AI_BUF_CNT      6
 
 /* 对齐宏 */
 #define ALIGN_UP(addr, size)  (((addr) + ((size) - 1U)) & (~((size) - 1U)))
@@ -47,17 +48,35 @@
 #define STREAM_BUF_SIZE  ALIGN_UP(ENC_WIDTH * ENC_HEIGHT / 2, 0xFFF)
 #define CHN_BUF_SIZE     ALIGN_UP(ENC_WIDTH * ENC_HEIGHT * 3 / 2, 0xFFF)
 
+/* AI 低清旁路配置 */
+#define AI_WIDTH   640
+#define AI_HEIGHT  480
+
+#ifndef AI_USE_Y_ONLY_FORMAT
+#define AI_USE_Y_ONLY_FORMAT 0
+#endif
+
+#if AI_USE_Y_ONLY_FORMAT
+#define AI_PIXEL_FORMAT  PIXEL_FORMAT_YUV_400
+#define AI_CHN_BUF_SIZE  ALIGN_UP(AI_WIDTH * AI_HEIGHT, 0x1000)
+#else
+#define AI_PIXEL_FORMAT  PIXEL_FORMAT_YUV_SEMIPLANAR_420
+#define AI_CHN_BUF_SIZE  ALIGN_UP(AI_WIDTH * AI_HEIGHT * 3 / 2, 0x1000)
+#endif
+
 /* 自动退出时间 (秒) */
 #define AUTO_EXIT_SEC   600
 
 /* VENC 码流线程配置 */
 #define VENC_MAX_PACKS                 MPP_MAX_STREAM_PACKS
 #define VENC_GET_STREAM_TIMEOUT_MS     200
+#define AI_FRAME_DUMP_TIMEOUT_MS       50
 
 /* 通道 ID */
 #define VENC_CHN    0
 #define VICAP_DEV   VICAP_DEV_ID_0
 #define VICAP_CHN   VICAP_CHN_ID_0
+#define AI_VICAP_CHN VICAP_CHN_ID_2
 
 /* 管线状态机 — 用于清理时正确跳过未初始化的步骤 */
 typedef enum {
@@ -100,5 +119,19 @@ void stream_export_deinit(void);
 k_s32 osd_init(void);
 k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms);
 void osd_deinit(void);
+
+k_s32 motion_detect_process(const ai_gray_frame_view *frame, motion_detect_result *result);
+
+k_s32 ai_frame_channel_init(void);
+k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle);
+k_s32 ai_frame_release(void *handle);
+void ai_frame_channel_deinit(void);
+
+k_s32 motion_adapter_init(void);
+k_s32 motion_adapter_process(const ai_gray_frame_view *frame, motion_event_msg *event, k_bool *has_event);
+void motion_adapter_deinit(void);
+
+k_s32 ai_motion_thread_start(void);
+void ai_motion_thread_stop(void);
 
 #endif /* MPP_PIPELINE_H */

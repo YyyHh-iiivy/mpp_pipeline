@@ -14,6 +14,9 @@ src = [
     'mpp_pipeline/cleanup_module.c',
     'mpp_pipeline/stream_export.c',
     'mpp_pipeline/osd_module.c',
+    'mpp_pipeline/ai_frame_module.c',
+    'mpp_pipeline/motion_adapter.c',
+    'mpp_pipeline/ai_motion_thread.c',
 ]
 
 # --- MPP 头文件路径 ---

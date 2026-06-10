@@ -40,4 +40,18 @@ typedef struct {
     char path_hint[64];
 } snapshot_request_msg;
 
+typedef struct {
+    k_u64 frame_id;
+    k_u64 timestamp_ms;
+    k_u32 width;
+    k_u32 height;
+    k_u32 stride;
+    const k_u8 *y;
+} ai_gray_frame_view;
+
+typedef struct {
+    k_u32 is_motion;
+    k_u32 motion_score;
+} motion_detect_result;
+
 #endif /* MPP_TYPES_H */

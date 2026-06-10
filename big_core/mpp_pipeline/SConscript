@@ -14,6 +14,9 @@ src = [
     'cleanup_module.c',
     'stream_export.c',
     'osd_module.c',
+    'ai_frame_module.c',
+    'motion_adapter.c',
+    'ai_motion_thread.c',
 ]
 
 # --- MPP 头文件路径 ---

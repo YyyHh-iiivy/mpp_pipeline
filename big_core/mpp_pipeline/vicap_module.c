@@ -1,9 +1,57 @@
 #include "mpp_pipeline.h"
 
+static k_s32 vicap_set_channel_attr(k_vicap_chn chn,
+                                    k_u32 width,
+                                    k_u32 height,
+                                    k_u32 buffer_num,
+                                    k_u32 buffer_size,
+                                    k_pixel_format pix_format,
+                                    k_bool use_sensor_crop_win,
+                                    const k_vicap_window *sensor_win)
+{
+    k_s32 ret;
+    k_vicap_chn_attr chn_attr;
+
+    memset(&chn_attr, 0, sizeof(chn_attr));
+
+    width = ALIGN_UP(width, 16);
+    chn_attr.out_win.h_start = 0;
+    chn_attr.out_win.v_start = 0;
+    chn_attr.out_win.width   = width;
+    chn_attr.out_win.height  = height;
+
+    if (use_sensor_crop_win && sensor_win) {
+        chn_attr.crop_win = *sensor_win;
+    } else {
+        chn_attr.crop_win = chn_attr.out_win;
+    }
+    chn_attr.scale_win    = chn_attr.out_win;
+    /* K230 sample_vicap 使用 out_win 指定输出尺寸，同时保持 scale_enable=false。 */
+    chn_attr.crop_enable  = K_FALSE;
+    chn_attr.scale_enable = K_FALSE;
+    chn_attr.chn_enable   = K_TRUE;
+    chn_attr.alignment    = 12;                   /* 4096 字节对齐 */
+    chn_attr.pix_format   = pix_format;
+    chn_attr.buffer_num   = buffer_num;
+    chn_attr.buffer_size  = buffer_size;
+
+    LOG("VICAP channel config: chn=%d size=%ux%u format=%d buffer_size=0x%x buffer_num=%u",
+        chn, chn_attr.out_win.width, chn_attr.out_win.height,
+        chn_attr.pix_format, chn_attr.buffer_size, chn_attr.buffer_num);
+
+    ret = kd_mpi_vicap_set_chn_attr(VICAP_DEV, chn, chn_attr);
+    if (ret) {
+        LOG("kd_mpi_vicap_set_chn_attr failed! chn=%d ret=0x%x", chn, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
 /* ================================================================
- * Step 3: VICAP (VI) 配置 1080P
+ * Step 3: VICAP (VI) 配置 1080P 主通道 + 640x480 AI 旁路
  *
- * 查询传感器 → 配置 device → 配置 channel → init
+ * 查询传感器 → 配置 device → 配置主 channel + AI channel → init
  * ================================================================ */
 /**
  * @brief 尝试配置VICAP模块以连接指定类型的传感器
@@ -21,14 +69,10 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type)
 {
     k_s32 ret;                                    // 返回值，用于存储API调用结果
     k_vicap_dev_attr dev_attr;                    // VICAP设备属性结构体，用于配置设备参数
-    k_vicap_chn_attr chn_attr;                    // VICAP通道属性结构体，用于配置通道参数
     k_vicap_sensor_info sensor_info;              // 传感器信息结构体，用于存储传感器详细信息
-    k_u32 width = ENC_WIDTH;                      // 输出宽度，从ENC_WIDTH宏获取默认值
-    k_u32 height = ENC_HEIGHT;                    // 输出高度，从ENC_HEIGHT宏获取默认值
 
     // 清零各个配置结构体，确保所有字段初始化为0
     memset(&dev_attr, 0, sizeof(dev_attr));       // 清零设备属性结构体
-    memset(&chn_attr, 0, sizeof(chn_attr));       // 清零通道属性结构体
     memset(&sensor_info, 0, sizeof(sensor_info)); // 清零传感器信息结构体
 
     /* 3.1 查询传感器信息 */
@@ -58,28 +102,22 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type)
         return ret;                               // 返回错误码
     }
 
-    /* 3.3 配置 channel: 1080P NV12, 不裁剪不缩放 */
-    width = ALIGN_UP(width, 16);                  // 宽度按16字节对齐，满足硬件要求
-    chn_attr.out_win.width  = width;              // 设置输出窗口宽度
-    chn_attr.out_win.height = height;             // 设置输出窗口高度
+    /* 3.3 配置主 channel: 1080P NV12, 后续只绑定该通道到 VENC */
+    ret = vicap_set_channel_attr(VICAP_CHN, ENC_WIDTH, ENC_HEIGHT,
+                                 INPUT_BUF_CNT, CHN_BUF_SIZE,
+                                 PIXEL_FORMAT_YUV_SEMIPLANAR_420,
+                                 K_FALSE, &dev_attr.acq_win);
+    if (ret)
+        return ret;
 
-    chn_attr.crop_win     = chn_attr.out_win;     // 裁剪窗口设为与输出窗口相同（无裁剪）
-    chn_attr.scale_win    = chn_attr.out_win;     // 缩放窗口设为与输出窗口相同（无缩放）
-    chn_attr.crop_enable  = K_FALSE;              // 禁用裁剪功能
-    chn_attr.scale_enable = K_FALSE;              // 禁用缩放功能
-    chn_attr.chn_enable   = K_TRUE;               // 启用通道
-    chn_attr.alignment    = 12;                   /* 4096 字节对齐 */
-    chn_attr.pix_format   = PIXEL_FORMAT_YUV_SEMIPLANAR_420;  /* NV12像素格式 */
-    chn_attr.buffer_num   = INPUT_BUF_CNT;        // 设置输入缓冲区数量
-    chn_attr.buffer_size  = CHN_BUF_SIZE;         // 设置通道缓冲区大小
+    /* 3.4 配置 AI channel: 640x480，默认 NV12，AI 只读取 Y 平面 */
+    ret = vicap_set_channel_attr(AI_VICAP_CHN, AI_WIDTH, AI_HEIGHT,
+                                 AI_BUF_CNT, AI_CHN_BUF_SIZE,
+                                 AI_PIXEL_FORMAT, K_TRUE, &dev_attr.acq_win);
+    if (ret)
+        return ret;
 
-    ret = kd_mpi_vicap_set_chn_attr(VICAP_DEV, VICAP_CHN, chn_attr);  // 设置VICAP通道属性
-    if (ret) {                                    // 检查设置是否成功
-        LOG("kd_mpi_vicap_set_chn_attr failed! ret=0x%x", ret);  // 记录错误日志
-        return ret;                               // 返回错误码
-    }
-
-    /* 3.4 初始化 VICAP */
+    /* 3.5 初始化 VICAP */
     ret = kd_mpi_vicap_init(VICAP_DEV);           // 初始化VICAP设备
     if (ret) {                                    // 检查初始化是否成功
         LOG("kd_mpi_vicap_init failed! ret=0x%x", ret);  // 记录错误日志
@@ -88,7 +126,7 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type)
     }
     g_status = STATUS_VICAP_INIT;                 // 更新全局状态为VICAP已初始化
 
-    LOG("VICAP dev=%d chn=%d init OK", VICAP_DEV, VICAP_CHN);  // 记录初始化成功日志
+    LOG("VICAP dev=%d main_chn=%d ai_chn=%d init OK", VICAP_DEV, VICAP_CHN, AI_VICAP_CHN);  // 记录初始化成功日志
     return 0;                                     // 返回成功
 }
 

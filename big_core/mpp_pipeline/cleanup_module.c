@@ -11,6 +11,7 @@ void pipeline_cleanup(void)
     k_s32 ret;
 
     LOG("Cleanup: current status=%d", g_status);
+    ai_motion_thread_stop();
     stream_export_deinit();
     osd_deinit();
 

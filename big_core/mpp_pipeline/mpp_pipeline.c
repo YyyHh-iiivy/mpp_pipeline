@@ -3,6 +3,7 @@
  *
  * 单进程多线程验证硬件管线:
  *   Sensor(GC2093) -> VICAP(1080P,NV12) -> [sys_bind] -> VENC(H.265,CBR,15fps)
+ *   VICAP(640x480,NV12-Y) -> AI motion thread -> OSD trigger
  *   采集线程: 打印 "Get NALU, Size: xxxx bytes"
  *
  * 验收标准: 15fps 持续打印 NALU 大小, 10 分钟不死机
@@ -35,6 +36,7 @@ int main(void)
     printf("  K230 MPP Pipeline MVP — Week 2\n");
     printf("  Sensor: GC2093(auto CSI)  Codec: H.265 CBR\n");
     printf("  Resolution: %dx%d@%dfps\n", ENC_WIDTH, ENC_HEIGHT, DST_FPS);
+    printf("  AI bypass: %dx%d chn=%d format=%d\n", AI_WIDTH, AI_HEIGHT, AI_VICAP_CHN, AI_PIXEL_FORMAT);
     printf("  Acceptance: 15fps NALU print, 10min stable\n");
     printf("========================================\n\n");
 
@@ -63,6 +65,9 @@ int main(void)
 
     /* Step 5: 启动 VICAP 流 */
     ret = vicap_start();
+    if (ret) goto cleanup;
+
+    ret = ai_motion_thread_start();
     if (ret) goto cleanup;
 
     ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);

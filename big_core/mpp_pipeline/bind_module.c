@@ -27,10 +27,6 @@ k_s32 vi_bind_venc(void)
     venc_mpp_chn.dev_id = 0;                    // 设置VENC设备ID为0
     venc_mpp_chn.chn_id = VENC_CHN;             // 设置VENC通道ID为VENC通道号
 
-    LOG("Binding: VI(dev=%d,chn=%d) -> VENC(dev=%d,chn=%d)",
-        vi_mpp_chn.dev_id, vi_mpp_chn.chn_id,   // 打印VI设备ID和通道ID
-        venc_mpp_chn.dev_id, venc_mpp_chn.chn_id);  // 打印VENC设备ID和通道ID
-
     ret = kd_mpi_sys_bind(&vi_mpp_chn, &venc_mpp_chn);  // 执行系统绑定，连接VI和VENC模块
     if (ret) {                                  // 检查绑定操作是否成功
         LOG("kd_mpi_sys_bind failed! ret=0x%x", ret);  // 记录绑定失败的日志

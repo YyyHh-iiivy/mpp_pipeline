@@ -34,9 +34,7 @@ static k_u32 ai_frame_y_size(const k_video_frame_info *frame_info)
 k_s32 ai_frame_channel_init(void)
 {
     g_ai_frame_id = 0;
-    LOG("AI frame channel ready: dev=%d chn=%d target=%ux%u format=%d timeout=%dms",
-        VICAP_DEV, AI_VICAP_CHN, AI_WIDTH, AI_HEIGHT,
-        AI_PIXEL_FORMAT, AI_FRAME_DUMP_TIMEOUT_MS);
+    LOG("AI frame channel ready");
     return 0;
 }
 

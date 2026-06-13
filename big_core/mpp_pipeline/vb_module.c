@@ -38,10 +38,6 @@ k_s32 vb_init(void)
     config.comm_pool[2].blk_size = AI_CHN_BUF_SIZE;
     config.comm_pool[2].mode     = VB_REMAP_MODE_NOCACHE;
 
-    LOG("VB Config: pool[0] blk_size=0x%lx blk_cnt=%u", config.comm_pool[0].blk_size, config.comm_pool[0].blk_cnt);
-    LOG("VB Config: pool[1] blk_size=0x%lx blk_cnt=%u", config.comm_pool[1].blk_size, config.comm_pool[1].blk_cnt);
-    LOG("VB Config: pool[2] blk_size=0x%lx blk_cnt=%u", config.comm_pool[2].blk_size, config.comm_pool[2].blk_cnt);
-
     ret = kd_mpi_vb_set_config(&config);
     if (ret) {
         LOG("kd_mpi_vb_set_config failed! ret=0x%x", ret);

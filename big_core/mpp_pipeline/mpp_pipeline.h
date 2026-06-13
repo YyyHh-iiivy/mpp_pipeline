@@ -122,7 +122,10 @@ void stream_thread(void *arg);
 void pipeline_cleanup(void);
 
 k_s32 stream_export_init(stream_export_mode mode);
-k_s32 stream_export_submit(const mpp_stream_frame_desc *frame);
+k_s32 stream_export_submit_venc_stream(k_u32 chn,
+                                       const k_venc_stream *stream,
+                                       k_bool *release_by_caller);
+k_s32 stream_export_flush(void);
 void stream_export_deinit(void);
 
 k_s32 osd_init(void);

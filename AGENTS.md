@@ -42,6 +42,15 @@ Do not replace SConscript whitelists with broad globs. Do not introduce V4L2, ff
 
 与用户的所有对话、状态更新和最终回复必须使用中文，除非用户明确要求其他语言。代码、命令、文件路径和日志保持原文。
 
+每次修改或新增代码文件后，都必须同步更新项目根目录下的 `程序流程.md`。该文件用于帮助用户和队友理解项目架构与流程，应使用“函数抽象 + 调用链 + 数据追踪”的方式编写。更新时必须确保：
+
+- 新增的文件和函数被及时抽象加入。
+- 修改的函数签名、调用关系被正确反映。
+- 删除的内容被清理。
+- 整体结构保持清晰可读。
+
+更新完成后，回复 `已同步更新程序流程.md` 作为确认。
+
 ## Testing Guidelines
 
 There is no automated unit test framework. Verification is build success plus board-side runtime validation. For `big_core/mpp_pipeline`, copy `big_app.elf` to the K230 board and run it. Expected logs include VB/VENC/VICAP init success, `VI->VENC bind OK`, repeated `Get NALU, Size: xxxx bytes`, clean auto-exit after 600 seconds, and `Pipeline test PASSED`.

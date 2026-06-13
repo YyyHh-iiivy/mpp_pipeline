@@ -1,0 +1,27 @@
+# Ignore everything by default.
+*
+
+# Keep this ignore file.
+!.gitignore
+
+# Keep root-level documents.
+!/*.md
+!/*.pdf
+
+# Keep selected big-core build/config entry files.
+!big_core/
+big_core/*
+!big_core/.sconsign.dblite
+!big_core/big_app.elf
+!big_core/cconfig.h
+!big_core/SConscript
+!big_core/SConstruct
+
+# Keep mpp_pipeline source/docs only.
+!big_core/mpp_pipeline/
+!big_core/mpp_pipeline/**
+
+# Ignore build outputs inside mpp_pipeline if they appear there later.
+big_core/mpp_pipeline/build/
+big_core/mpp_pipeline/*.o
+big_core/mpp_pipeline/*.elf

@@ -34,11 +34,7 @@ int main(void)
 
     printf("\n");
     printf("========================================\n");
-    printf("  K230 MPP Pipeline MVP — Week 2\n");
-    printf("  Sensor: GC2093(auto CSI)  Codec: H.265 CBR\n");
-    printf("  Resolution: %dx%d@%dfps\n", ENC_WIDTH, ENC_HEIGHT, DST_FPS);
-    printf("  AI bypass: %dx%d chn=%d format=%d\n", AI_WIDTH, AI_HEIGHT, AI_VICAP_CHN, AI_PIXEL_FORMAT);
-    printf("  Acceptance: 15fps NALU print, 10min stable\n");
+    printf("  K230 MPP pipeline test\n");
     printf("========================================\n\n");
 
     /* 注册信号处理 */
@@ -71,7 +67,8 @@ int main(void)
     ret = ai_motion_thread_start();
     if (ret) goto cleanup;
 
-    ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
+    ret = stream_export_init(STREAM_EXPORT_DATAFIFO);
+    // ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
     if (ret) goto cleanup;
 
     g_status = STATUS_RUNNING;
@@ -108,7 +105,7 @@ int main(void)
         goto cleanup;
     }
 
-    LOG("Pipeline running. Press Ctrl+C to stop (auto-exit in %d seconds).", AUTO_EXIT_SEC);
+    LOG("Pipeline running");
 
     /* 主循环: 等待退出信号或超时 */
     {
@@ -117,7 +114,7 @@ int main(void)
             rt_thread_mdelay(1000);
         }
         if (g_running) {
-            LOG("Auto-exit after %d seconds.", AUTO_EXIT_SEC);
+            LOG("Auto-exit timeout reached");
             g_running = 0;
         }
     }

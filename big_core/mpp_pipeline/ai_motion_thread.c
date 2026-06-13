@@ -30,11 +30,6 @@ static void ai_motion_thread(void *arg)
         timeout_count = 0;
         frame_count++;
 
-        if (frame_count == 1) {
-            LOG("AI frame first dump: chn=%d size=%ux%u stride=%u y=%p",
-                AI_VICAP_CHN, frame.width, frame.height, frame.stride, frame.y);
-        }
-
         ret = motion_adapter_process(&frame, &event, &has_event);
         if (!ret && has_event) {
             LOG("Motion detected: event_id=%u score=%u duration=%ums",

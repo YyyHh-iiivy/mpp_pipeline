@@ -41,9 +41,6 @@ k_s32 venc_init(k_u32 chn, k_u32 bitrate)
     attr.rc_attr.cbr.bit_rate       = bitrate;    // 设置目标码率为指定值
     attr.rc_attr.cbr.gop            = 30;        /* 每 30 个编码帧一个 I 帧；实际秒数取决于输出fps */
 
-    LOG("VENC Config: H.265 %dx%d CBR %ukbps %d->%dfps gop=%u",
-        ENC_WIDTH, ENC_HEIGHT, bitrate, SRC_FPS, DST_FPS, attr.rc_attr.cbr.gop);  // 记录编码配置信息
-
     ret = kd_mpi_venc_create_chn(chn, &attr);     // 创建VENC通道，使用指定的通道号和属性
     if (ret) {                                  // 检查通道创建是否成功
         LOG("kd_mpi_venc_create_chn failed! ret=0x%x", ret);  // 记录创建失败的日志
@@ -90,16 +87,14 @@ void stream_thread(void *arg)
     k_u32 query_fail_count = 0;                 // 查询失败计数，用于限制日志频率
     k_u32 get_fail_count = 0;                   // get_stream失败计数，用于限制日志频率
 
-    LOG("Stream thread started, chn=%u, waiting for NALUs...", chn);  // 记录线程启动日志
-    LOG("Stream export mode: local-log, timeout=%dms, max_packs=%d",
-        VENC_GET_STREAM_TIMEOUT_MS, VENC_MAX_PACKS);
+    LOG("Stream thread started");               // 记录线程启动日志
     start_time = last_log = time(NULL);         // 记录开始时间和上次日志时间
     memset(&output, 0, sizeof(output));
     output.pack = packs;
 
     while (g_running) {                         // 当程序正在运行时持续循环
         k_venc_chn_status status;               // VENC通道状态结构体
-        mpp_stream_frame_desc frame;            // 大核码流出口描述
+        k_bool release_by_caller = K_TRUE;       // 导出层返回的释放责任
 
         /* 查询当前有多少个 pack */
         ret = kd_mpi_venc_query_status(chn, &status);  // 查询VENC通道的状态
@@ -127,25 +122,19 @@ void stream_thread(void *arg)
         if (ret) {                              // 检查获取码流是否成功
             if (!g_running)                      // 如果程序准备退出
                 break;                           // 跳出循环结束线程
+            {
+                k_s32 flush_ret = stream_export_flush();
+                if (flush_ret && ((get_fail_count % 25) == 0))
+                    LOG("stream_export_flush failed! ret=0x%x", flush_ret);
+            }
             if ((get_fail_count++ % 25) == 0)
                 LOG("kd_mpi_venc_get_stream timeout/no stream ret=0x%x", ret);
             continue;                            // 暂时无流时继续等待
         }
         get_fail_count = 0;
 
-        memset(&frame, 0, sizeof(frame));
-        frame.chn = chn;
-        frame.pack_cnt = output.pack_cnt;
-        if (output.pack_cnt > 0)
-            frame.pts = output.pack[0].pts;
-
         /* 遍历所有 pack, 只统计非 header 的数据帧 */
         for (k_u32 i = 0; i < output.pack_cnt; i++) {  // 遍历所有编码包
-            frame.packs[i].phys_addr = output.pack[i].phys_addr;
-            frame.packs[i].virt_addr = 0;
-            frame.packs[i].len = output.pack[i].len;
-            frame.packs[i].type = output.pack[i].type;
-
             if (output.pack[i].type != K_VENC_HEADER) {  // 检查是否为非头部帧（即实际数据帧）
                 frame_count++;                  // 增加总帧计数
                 interval_frames++;              // 增加区间帧计数
@@ -153,13 +142,15 @@ void stream_thread(void *arg)
             }
         }
 
-        ret = stream_export_submit(&frame);
+        ret = stream_export_submit_venc_stream(chn, &output, &release_by_caller);
         if (ret)
-            LOG("stream_export_submit failed! ret=0x%x", ret);
+            LOG("stream_export_submit_venc_stream failed! ret=0x%x", ret);
 
-        ret = kd_mpi_venc_release_stream(chn, &output);  // 释放已获取的码流资源
-        if (ret) {                              // 检查释放操作是否成功
-            LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);  // 记录错误日志
+        if (release_by_caller) {
+            ret = kd_mpi_venc_release_stream(chn, &output);  // 释放已获取的码流资源
+            if (ret) {                              // 检查释放操作是否成功
+                LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);  // 记录错误日志
+            }
         }
 
         /* 每 150 帧统计一次帧率；15fps 时约 10 秒，30fps 时约 5 秒 */

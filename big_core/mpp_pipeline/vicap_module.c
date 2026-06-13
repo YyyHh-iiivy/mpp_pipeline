@@ -35,10 +35,6 @@ static k_s32 vicap_set_channel_attr(k_vicap_chn chn,
     chn_attr.buffer_num   = buffer_num;
     chn_attr.buffer_size  = buffer_size;
 
-    LOG("VICAP channel config: chn=%d size=%ux%u format=%d buffer_size=0x%x buffer_num=%u",
-        chn, chn_attr.out_win.width, chn_attr.out_win.height,
-        chn_attr.pix_format, chn_attr.buffer_size, chn_attr.buffer_num);
-
     ret = kd_mpi_vicap_set_chn_attr(VICAP_DEV, chn, chn_attr);
     if (ret) {
         LOG("kd_mpi_vicap_set_chn_attr failed! chn=%d ret=0x%x", chn, ret);
@@ -82,9 +78,7 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type)
         LOG("kd_mpi_vicap_get_sensor_info failed! ret=0x%x (sensor_type=%d)", ret, sensor_type);  // 记录错误日志
         return ret;                               // 返回错误码
     }
-    LOG("Sensor: %s %ux%u@%ufps csi=%d lanes=%d type=%d",
-        sensor_info.sensor_name, sensor_info.width, sensor_info.height,  // 打印传感器名称、宽高
-        sensor_info.fps, sensor_info.csi_num, sensor_info.mipi_lanes, sensor_type);  // 打印帧率、CSI号、MIPI通道数和类型
+    LOG("Sensor detected: %s", sensor_info.sensor_name);
 
     /* 3.2 配置 device */
     dev_attr.acq_win.width  = sensor_info.width;   // 设置采集窗口宽度为传感器实际宽度
@@ -126,7 +120,7 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type)
     }
     g_status = STATUS_VICAP_INIT;                 // 更新全局状态为VICAP已初始化
 
-    LOG("VICAP dev=%d main_chn=%d ai_chn=%d init OK", VICAP_DEV, VICAP_CHN, AI_VICAP_CHN);  // 记录初始化成功日志
+    LOG("VICAP init OK");                       // 记录初始化成功日志
     return 0;                                     // 返回成功
 }
 

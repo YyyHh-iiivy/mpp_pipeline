@@ -10,7 +10,7 @@ void pipeline_cleanup(void)
 {
     k_s32 ret;
 
-    LOG("Cleanup: current status=%d", g_status);
+    LOG("Cleanup started");
     ai_motion_thread_stop();
     stream_export_deinit();
     osd_deinit();
@@ -19,7 +19,6 @@ void pipeline_cleanup(void)
     if (g_status >= STATUS_STREAM_STARTED) {
         ret = kd_mpi_vicap_stop_stream(VICAP_DEV);
         CHECK_RET(ret, __func__, __LINE__);
-        LOG("vicap_stop_stream done");
     }
 
     /* 4. 解绑 */
@@ -28,37 +27,31 @@ void pipeline_cleanup(void)
         k_mpp_chn venc_mpp_chn = { .mod_id = K_ID_VENC, .dev_id = 0,         .chn_id = VENC_CHN };
         ret = kd_mpi_sys_unbind(&vi_mpp_chn, &venc_mpp_chn);
         CHECK_RET(ret, __func__, __LINE__);
-        LOG("sys_unbind done");
     }
 
     /* 3. 反初始化 VICAP */
     if (g_status >= STATUS_VICAP_INIT) {
         ret = kd_mpi_vicap_deinit(VICAP_DEV);
         CHECK_RET(ret, __func__, __LINE__);
-        LOG("vicap_deinit done");
     }
 
     /* 2. 停 + 销毁 VENC */
     if (g_status >= STATUS_VENC_STARTED) {
         ret = kd_mpi_venc_stop_chn(VENC_CHN);
         CHECK_RET(ret, __func__, __LINE__);
-        LOG("venc_stop_chn done");
     }
     if (g_status >= STATUS_VENC_CREATED) {
         ret = kd_mpi_venc_destroy_chn(VENC_CHN);
         CHECK_RET(ret, __func__, __LINE__);
-        LOG("venc_destroy_chn done");
     }
 
     /* 1. 关闭 VENC fd + 退出 VB */
     if (g_status >= STATUS_VENC_CREATED) {
         kd_mpi_venc_close_fd();
-        LOG("venc_close_fd done");
     }
     if (g_status >= STATUS_VB_INIT) {
         ret = kd_mpi_vb_exit();
         CHECK_RET(ret, __func__, __LINE__);
-        LOG("vb_exit done");
     }
 
     LOG("Cleanup complete");

@@ -3,18 +3,20 @@
 #include "k_datafifo.h"
 #include "mpp_nalu_ipc.h"
 
-#define NALU_IPC_FIFO_ENTRIES 128U
 #define NALU_IPC_PENDING_MAX  OUTPUT_BUF_CNT
+#define NALU_IPC_FIFO_ENTRIES NALU_IPC_PENDING_MAX
 
 typedef struct {
     k_bool in_use;
-    mpp_nalu_ipc_msg msg;
+    /* ipc_msg is both the DATAFIFO item and the delayed-release credential. */
+    mpp_nalu_ipc_msg ipc_msg;
 } nalu_ipc_pending_item;
 
 static k_datafifo_handle g_nalu_fifo = K_DATAFIFO_INVALID_HANDLE;
 static k_bool g_nalu_fifo_inited = K_FALSE;
 static k_u64 g_nalu_fifo_phy_addr;
 static k_u64 g_nalu_seq;
+/* Tracks streams that were handed to DATAFIFO but not yet READ_DONE by Linux. */
 static nalu_ipc_pending_item g_pending[NALU_IPC_PENDING_MAX];
 
 static k_datafifo_params_s g_nalu_fifo_params = {
@@ -24,9 +26,9 @@ static k_datafifo_params_s g_nalu_fifo_params = {
     DATAFIFO_WRITER
 };
 
-static void nalu_ipc_fill_release_stream(const mpp_nalu_ipc_msg *msg,
-                                         k_venc_pack *packs,
-                                         k_venc_stream *stream)
+static void nalu_ipc_msg_to_release_stream(const mpp_nalu_ipc_msg *msg,
+                                           k_venc_pack *packs,
+                                           k_venc_stream *stream)
 {
     memset(packs, 0, sizeof(k_venc_pack) * MPP_NALU_IPC_MAX_PACKS);
     memset(stream, 0, sizeof(*stream));
@@ -42,7 +44,7 @@ static void nalu_ipc_fill_release_stream(const mpp_nalu_ipc_msg *msg,
     }
 }
 
-static void nalu_ipc_release_stream_msg(const mpp_nalu_ipc_msg *msg)
+static void nalu_ipc_release_msg_stream(const mpp_nalu_ipc_msg *msg)
 {
     k_s32 ret;
     k_venc_stream stream;
@@ -51,7 +53,7 @@ static void nalu_ipc_release_stream_msg(const mpp_nalu_ipc_msg *msg)
     if (!msg || msg->magic != MPP_NALU_IPC_MAGIC || msg->pack_cnt == 0)
         return;
 
-    nalu_ipc_fill_release_stream(msg, packs, &stream);
+    nalu_ipc_msg_to_release_stream(msg, packs, &stream);
     ret = kd_mpi_venc_release_stream(msg->chn, &stream);
     CHECK_RET(ret, __func__, __LINE__);
 }
@@ -63,8 +65,8 @@ static nalu_ipc_pending_item *nalu_ipc_find_pending(const mpp_nalu_ipc_msg *msg)
 
     for (k_u32 i = 0; i < NALU_IPC_PENDING_MAX; i++) {
         if (g_pending[i].in_use &&
-            g_pending[i].msg.seq == msg->seq &&
-            g_pending[i].msg.chn == msg->chn)
+            g_pending[i].ipc_msg.seq == msg->seq &&
+            g_pending[i].ipc_msg.chn == msg->chn)
             return &g_pending[i];
     }
 
@@ -91,7 +93,7 @@ static void nalu_ipc_release_callback(void *p_stream)
         return;
     }
 
-    nalu_ipc_release_stream_msg(&pending->msg);
+    nalu_ipc_release_msg_stream(&pending->ipc_msg);
     memset(pending, 0, sizeof(*pending));
 }
 
@@ -177,6 +179,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
         return -1;
     }
 
+    /* A successful submit transfers release responsibility to this backend. */
     /* Flush release notifications from the reader side before checking space. */
     ret = kd_datafifo_write(g_nalu_fifo, NULL);
     if (ret) {
@@ -202,10 +205,10 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
         return -1;
     }
 
-    nalu_ipc_build_msg(&pending->msg, chn, stream);
+    nalu_ipc_build_msg(&pending->ipc_msg, chn, stream);
     pending->in_use = K_TRUE;
 
-    ret = kd_datafifo_write(g_nalu_fifo, &pending->msg);
+    ret = kd_datafifo_write(g_nalu_fifo, &pending->ipc_msg);
     if (ret) {
         LOG("kd_datafifo_write failed! ret=0x%x", ret);
         memset(pending, 0, sizeof(*pending));
@@ -245,8 +248,8 @@ void nalu_ipc_deinit(void)
     for (k_u32 i = 0; i < NALU_IPC_PENDING_MAX; i++) {
         if (g_pending[i].in_use) {
             LOG("NALU IPC force release pending seq=%llu",
-                (unsigned long long)g_pending[i].msg.seq);
-            nalu_ipc_release_stream_msg(&g_pending[i].msg);
+                (unsigned long long)g_pending[i].ipc_msg.seq);
+            nalu_ipc_release_msg_stream(&g_pending[i].ipc_msg);
             memset(&g_pending[i], 0, sizeof(g_pending[i]));
         }
     }

@@ -78,7 +78,7 @@ void stream_thread(void *arg)
 {
     k_u32 chn = (k_u32)(k_u64)arg;              // 将传入参数转换为通道号
     k_venc_stream output;                        // 存储编码后的码流数据
-    k_venc_pack packs[VENC_MAX_PACKS];           // 固定 pack 缓冲，避免每帧动态分配
+    k_venc_pack packs[VENC_MAX_PACKS];           // SDK get_stream() 的临时 pack 描述缓冲，不承载码流数据
     k_s32 ret;                                  // 返回值，用于存储API调用结果
     k_u32 frame_count = 0;                      // 总帧计数器，统计接收到的所有非头部帧
     k_u32 total_bytes = 0;                      // 总字节数计数器

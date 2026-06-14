@@ -10,16 +10,6 @@ static k_u64 motion_now_ms(void)
     return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
 }
 
-__attribute__((weak)) k_s32 motion_detect_process(const ai_gray_frame_view *frame,
-                                                  motion_detect_result *result)
-{
-    if (!frame || !result)
-        return -1;
-
-    memset(result, 0, sizeof(*result));
-    return 0;
-}
-
 k_s32 motion_adapter_init(void)
 {
     g_motion_event_id = 0;

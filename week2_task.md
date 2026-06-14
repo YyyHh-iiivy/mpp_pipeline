@@ -22,7 +22,7 @@ Week 2 队长目标：
 
 1. 稳定大核 H.265 码流线程，消除每帧 `malloc/free` 和永久阻塞退出风险。
 2. 抽象出大核码流出口，方便后续小核 Linux RTSP 服务通过 MAPI/IPC/共享内存消费。
-3. 形成 `接口说明.md`，让队员 A/B 不需要读 `venc_module.c` 内部也能对接。
+3. 形成 `接口说明.md`，让队员 A/B 不需要读 `media_venc.c` 内部也能对接。
 4. 验证或至少写清低分辨率 AI 旁路通道方案。
 5. 预留硬件 OSD Region 控制接口，禁止 CPU 逐像素画 1080P。
 
@@ -70,11 +70,11 @@ Week 2 队长目标：
 ```text
 mpp_pipeline.c      程序入口、信号处理、初始化编排、600 秒自动退出、PASS/FAIL 日志
 mpp_pipeline.h      公共配置、MPP SDK 头、通道 ID、buffer size、状态机、函数声明
-vb_module.c         VB pool 配置和初始化
-venc_module.c       VENC 创建/启动，stream_thread 获取 H.265 NALU
-vicap_module.c      GC2093 查询、VICAP 配置、CSI fallback、启动
-bind_module.c       VI/VICAP 到 VENC 的硬件绑定
-cleanup_module.c    按状态机逆序释放 MPP 资源
+media_vb.c         VB pool 配置和初始化
+media_venc.c       VENC 创建/启动，stream_thread 获取 H.265 NALU
+media_vicap.c      GC2093 查询、VICAP 配置、CSI fallback、启动
+media_bind.c       VI/VICAP 到 VENC 的硬件绑定
+media_cleanup.c    按状态机逆序释放 MPP 资源
 SConscript          源码白名单与 MPP include/lib 配置
 ```
 
@@ -85,8 +85,8 @@ SConscript          源码白名单与 MPP include/lib 配置
 ```text
 mpp_types.h         Week 2 跨模块公共数据结构，只放轻量 struct 和常量
 stream_export.c     大核码流出口适配层，先做本地日志回调，不做小核网络
-osd_module.c        OSD Region 控制接口 stub 或最小验证实现
-ai_frame_module.c   低分辨率 AI 旁路方案验证代码，若 API 不确定可先只写方案文档
+media_osd.c        OSD Region 控制接口 stub 或最小验证实现
+motion_ai_frame.c   低分辨率 AI 旁路方案验证代码，若 API 不确定可先只写方案文档
 ```
 
 文档文件：
@@ -113,7 +113,7 @@ OS 与多媒体核心管线/mpp_pipeline/SConscript
 修改文件：
 
 ```text
-OS 与多媒体核心管线/mpp_pipeline/venc_module.c
+OS 与多媒体核心管线/mpp_pipeline/media_venc.c
 OS 与多媒体核心管线/mpp_pipeline/mpp_pipeline.h
 ```
 
@@ -189,7 +189,7 @@ OS 与多媒体核心管线/mpp_pipeline/stream_export.c
 
 ```text
 OS 与多媒体核心管线/mpp_pipeline/mpp_pipeline.h
-OS 与多媒体核心管线/mpp_pipeline/venc_module.c
+OS 与多媒体核心管线/mpp_pipeline/media_venc.c
 OS 与多媒体核心管线/mpp_pipeline/SConscript
 ```
 
@@ -363,7 +363,7 @@ request_snapshot
 
 ```text
 OS 与多媒体核心管线/mpp_pipeline/接口说明.md
-OS 与多媒体核心管线/mpp_pipeline/ai_frame_module.c    可选
+OS 与多媒体核心管线/mpp_pipeline/motion_ai_frame.c    可选
 OS 与多媒体核心管线/mpp_pipeline/mpp_pipeline.h         可选
 OS 与多媒体核心管线/mpp_pipeline/SConscript             可选
 ```
@@ -398,7 +398,7 @@ void ai_frame_channel_deinit(void);
 新增或修改：
 
 ```text
-OS 与多媒体核心管线/mpp_pipeline/osd_module.c
+OS 与多媒体核心管线/mpp_pipeline/media_osd.c
 OS 与多媒体核心管线/mpp_pipeline/mpp_pipeline.h
 OS 与多媒体核心管线/mpp_pipeline/SConscript
 ```

@@ -20,6 +20,7 @@
 #include "mpi_vicap_api.h"
 #include "k_venc_comm.h"
 #include "mpp_types.h"
+#include "motion_detect.h"
 
 /* GC2093 传感器 (开发板标注 TYS-2093-V31)
  * SDK 示例和多数 K230 板卡把 GC2093 接在 CSI2；CSI0 配置会在 kd_mpi_vicap_init()
@@ -49,8 +50,8 @@
 #define CHN_BUF_SIZE     ALIGN_UP(ENC_WIDTH * ENC_HEIGHT * 3 / 2, 0xFFF)
 
 /* AI 低清旁路配置 */
-#define AI_WIDTH   640
-#define AI_HEIGHT  480
+#define AI_WIDTH   AI_GRAY_MAX_WIDTH
+#define AI_HEIGHT  AI_GRAY_MAX_HEIGHT
 
 #ifndef AI_USE_Y_ONLY_FORMAT
 #define AI_USE_Y_ONLY_FORMAT 0
@@ -99,7 +100,11 @@ typedef enum {
     STATUS_BUTT
 } pipeline_status;
 
-extern volatile int g_running;
+#define THREAD_EXIT_POLL_MS             100
+#define STREAM_THREAD_EXIT_TIMEOUT_MS   3000
+#define AI_THREAD_EXIT_TIMEOUT_MS       3000
+
+extern volatile sig_atomic_t g_running;
 extern pipeline_status g_status;
 extern rt_thread_t g_stream_tid;
 extern rt_sem_t g_stream_exit_sem;
@@ -131,8 +136,6 @@ void stream_export_deinit(void);
 k_s32 osd_init(void);
 k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms);
 void osd_deinit(void);
-
-k_s32 motion_detect_process(const ai_gray_frame_view *frame, motion_detect_result *result);
 
 k_s32 ai_frame_channel_init(void);
 k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle);

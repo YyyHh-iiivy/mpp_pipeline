@@ -2,6 +2,8 @@
 
 本文只概括 `big_core/mpp_pipeline` 目录下的 MPP 管线代码，不覆盖仓库里的其它示例、配置文件或历史文档。
 
+文件命名前缀按任务目标划分：`media_*` 负责大核 MPP 底层媒体能力，`stream_*` 负责 H.265/NALU 码流出口和小核推流对接准备，`motion_*` 负责 AI 低清帧、运动检测算法契约和运动事件闭环。
+
 ## 1. 函数视角的文件抽象
 
 ### big_core/mpp_pipeline/mpp_pipeline.c
@@ -26,19 +28,23 @@
 
 ### big_core/mpp_pipeline/mpp_types.h
 
+- `AI_GRAY_MAX_WIDTH / AI_GRAY_MAX_HEIGHT -> compile_time_contract`
+  输入：无运行期输入。
+  输出：AI 灰度检测输入的最大尺寸，当前为 `640x480`。
+
 - `mpp_stream_frame_desc(chn: k_u32, pts: k_u64, pack_cnt: k_u32, packs: mpp_stream_pack_desc[]) -> encoded_frame_descriptor`
   输入：VENC 输出的通道号、时间戳、pack 数量和每个 pack 的物理地址、长度、类型。
   输出：传给 `stream_export_submit()` 的统一码流帧描述。
 
 - `ai_gray_frame_view(frame_id: k_u64, timestamp_ms: k_u64, width: k_u32, height: k_u32, stride: k_u32, y: const k_u8 *) -> ai_luma_view`
   输入：AI 通道 dump 出来的低清帧元数据和 Y 平面虚拟地址。
-  输出：传给运动检测适配层的灰度图视图；不拥有底层帧资源，资源由 `ai_frame_release()` 释放。
+  输出：传给运动检测适配层的灰度图视图；`y` 是 NV12 的 Y 平面，可当灰度图使用；调用方必须按 `stride` 逐行访问，不拥有底层帧资源，资源由 `ai_frame_release()` 释放。
 
 - `motion_event_msg(event_id: k_u32, detect_time_ms: k_u64, motion_score: k_u32, osd_duration_ms: k_u32, request_snapshot: k_u32) -> motion_event`
   输入：运动检测结果和事件生成时间。
   输出：AI 线程用于触发 OSD 或后续抓拍逻辑的事件消息。
 
-### big_core/mpp_pipeline/vb_module.c
+### big_core/mpp_pipeline/media_vb.c
 
 - `vb_init(void) -> k_s32`
   输入：无参数；使用 `INPUT_BUF_CNT`、`OUTPUT_BUF_CNT`、`AI_BUF_CNT`、`FRAME_BUF_SIZE`、`STREAM_BUF_SIZE`、`AI_CHN_BUF_SIZE` 等宏。
@@ -49,7 +55,7 @@
   - Pool 1：VENC 码流池，`OUTPUT_BUF_CNT` 块，每块 `STREAM_BUF_SIZE`，用于编码后的压缩码流缓存。
   - Pool 2：AI 低清旁路帧池，`AI_BUF_CNT` 块，每块 `AI_CHN_BUF_SIZE`，供 `640x480` AI 通道 dump 使用。
 
-### big_core/mpp_pipeline/vicap_module.c
+### big_core/mpp_pipeline/media_vicap.c
 
 - `vicap_set_channel_attr(chn: k_vicap_chn, width: k_u32, height: k_u32, buffer_num: k_u32, buffer_size: k_u32, pix_format: k_pixel_format, use_sensor_crop_win: k_bool, sensor_win: const k_vicap_window *) -> k_s32`
   输入：VICAP 通道号、输出尺寸、buffer 数量和大小、像素格式、是否复用 sensor 裁剪窗口。
@@ -67,7 +73,7 @@
   输入：无参数；使用固定 `VICAP_DEV`。
   输出：`0` 表示 `kd_mpi_vicap_start_stream()` 成功，VICAP 开始出帧；非 `0` 为启动错误码。
 
-### big_core/mpp_pipeline/venc_module.c
+### big_core/mpp_pipeline/media_venc.c
 
 - `venc_init(chn: k_u32, bitrate: k_u32) -> k_s32`
   输入：VENC 通道号和目标码率，单位 kbps。
@@ -77,13 +83,13 @@
   输入：RT-Thread 线程参数，转换后作为 VENC 通道号。
   输出：无函数返回值；循环从 VENC 获取 `k_venc_stream`，转换成 `mpp_stream_frame_desc`，提交给 `stream_export_submit()`，退出时释放 `g_stream_exit_sem`。
 
-### big_core/mpp_pipeline/bind_module.c
+### big_core/mpp_pipeline/media_bind.c
 
 - `vi_bind_venc(void) -> k_s32`
   输入：无参数；使用固定主链路 `VICAP_CHN` 和 `VENC_CHN`。
   输出：`0` 表示 `VI -> VENC` 硬件绑定成功；非 `0` 为 `kd_mpi_sys_bind()` 错误码。AI 通道不在这里绑定。
 
-### big_core/mpp_pipeline/ai_frame_module.c
+### big_core/mpp_pipeline/motion_ai_frame.c
 
 - `ai_now_ms(void) -> k_u64`
   输入：无参数。
@@ -119,10 +125,6 @@
   输入：无参数。
   输出：当前单调时钟毫秒值。该函数为文件内静态辅助函数。
 
-- `motion_detect_process(frame: const ai_gray_frame_view *, result: motion_detect_result *) -> k_s32`
-  输入：一帧 AI 灰度图视图和用于接收检测结果的结构体。
-  输出：`0` 表示算法处理成功；当前弱符号默认实现始终输出“无运动”。后续 B 题算法可提供同名强符号覆盖它。
-
 - `motion_adapter_init(void) -> k_s32`
   输入：无参数。
   输出：`0` 表示运动适配层初始化完成，并重置事件序号。
@@ -135,7 +137,19 @@
   输入：无参数。
   输出：无返回值；输出运动适配层反初始化日志。
 
-### big_core/mpp_pipeline/ai_motion_thread.c
+### big_core/mpp_pipeline/motion_detect.h
+
+- `motion_detect_process(frame: const ai_gray_frame_view *, result: motion_detect_result *) -> k_s32`
+  输入：一帧 AI 灰度图视图和用于接收检测结果的结构体。
+  输出：`0` 表示算法处理成功；B 题算法可提供同名强符号覆盖默认弱符号实现。B 侧只填写检测结果，不直接操作 OSD、VICAP、VENC、线程或帧释放。
+
+### big_core/mpp_pipeline/motion_detect_default.c
+
+- `motion_detect_process(frame: const ai_gray_frame_view *, result: motion_detect_result *) -> k_s32`
+  输入：AI 低清通道 NV12 的 Y 平面视图；逐行读取时使用 `stride`，不假设 `stride == width`。
+  输出：默认弱符号帧差示例结果；首帧建立基线，后续根据变化像素比例输出 `motion_score` 并在达到阈值时置 `is_motion = 1`。
+
+### big_core/mpp_pipeline/motion_thread.c
 
 - `ai_motion_thread(arg: void *) -> void`
   输入：RT-Thread 线程参数，当前未使用。
@@ -163,7 +177,7 @@
   输入：无参数。
   输出：无返回值；若导出模块已初始化，则输出反初始化日志并清除状态。
 
-### big_core/mpp_pipeline/osd_module.c
+### big_core/mpp_pipeline/media_osd.c
 
 - `osd_init(void) -> k_s32`
   输入：无参数。
@@ -177,9 +191,8 @@
   输入：无参数。
   输出：无返回值；若 OSD stub 已初始化，则输出反初始化日志并清除状态。
 
-### big_core/mpp_pipeline/cleanup_module.c
+### big_core/mpp_pipeline/media_cleanup.c
 
 - `pipeline_cleanup(void) -> void`
   输入：无参数；读取全局 `g_status` 判断已经初始化到哪一步。
   输出：无返回值；按逆序停止 AI 线程、关闭导出和 OSD、停止 VICAP、解绑 VI/VENC、反初始化 VICAP、停止并销毁 VENC、关闭 VENC fd、退出 VB。
-

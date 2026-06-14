@@ -7,17 +7,18 @@ cwd = GetCurrentDir()
 # --- 源码白名单 ---
 src = [
     'mpp_pipeline.c',
-    'vb_module.c',
-    'venc_module.c',
-    'vicap_module.c',
-    'bind_module.c',
-    'cleanup_module.c',
+    'media_vb.c',
+    'media_venc.c',
+    'media_vicap.c',
+    'media_bind.c',
+    'media_cleanup.c',
     'stream_export.c',
-    'nalu_ipc_module.c',
-    'osd_module.c',
-    'ai_frame_module.c',
+    'stream_nalu_ipc.c',
+    'media_osd.c',
+    'motion_ai_frame.c',
+    'motion_detect_default.c',
     'motion_adapter.c',
-    'ai_motion_thread.c',
+    'motion_thread.c',
 ]
 
 # --- MPP 头文件路径 ---

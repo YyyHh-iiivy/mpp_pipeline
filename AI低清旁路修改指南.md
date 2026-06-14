@@ -4,6 +4,8 @@
 
 目标：在不回退、不重写现有 1080P H.265 主链路的前提下，新增给队员 B 使用的 640x480 灰度运动检测旁路，并验证 K230 VICAP/VI 是否可以直接输出 640x480 灰度图。
 
+当前 `mpp_pipeline` 文件按任务目标命名：`media_*` 是大核 MPP 底层媒体能力，`stream_*` 是码流/小核推流对接面，`motion_*` 是 AI 运动检测对接面。
+
 ## 1. 当前代码边界
 
 当前代码位于：
@@ -19,18 +21,18 @@ OS 与多媒体核心管线/mpp_pipeline
 | `mpp_pipeline.c` | 主流程编排：VB、VENC、OSD、VICAP、bind、start、stream thread、cleanup | 只接入 AI 线程启动，不塞算法细节 |
 | `mpp_pipeline.h` | 全局宏、通道号、buffer 尺寸、状态机、函数声明 | 新增 AI 通道常量、类型声明、模块函数声明 |
 | `mpp_types.h` | 跨模块数据结构 | 新增 B 的灰度帧视图和运动检测结果类型 |
-| `vb_module.c` | 初始化 VB pool | 为 AI 低清旁路增加 buffer 规划 |
-| `vicap_module.c` | 配置 VICAP device 和当前 1080P 主通道 | 拆出通道配置 helper，配置主通道 + AI 通道 |
-| `bind_module.c` | 绑定 VI 主通道到 VENC | 保持只绑定主通道，不绑定 AI 通道 |
-| `venc_module.c` | H.265 VENC 初始化和码流获取 | 不加入 AI 算法，不改网络 |
+| `media_vb.c` | 初始化 VB pool | 为 AI 低清旁路增加 buffer 规划 |
+| `media_vicap.c` | 配置 VICAP device 和当前 1080P 主通道 | 拆出通道配置 helper，配置主通道 + AI 通道 |
+| `media_bind.c` | 绑定 VI 主通道到 VENC | 保持只绑定主通道，不绑定 AI 通道 |
+| `media_venc.c` | H.265 VENC 初始化和码流获取 | 不加入 AI 算法，不改网络 |
 | `stream_export.c` | 当前仅打印 NALU，后续给小核 RTSP 替换内部实现 | 本次不改 |
-| `osd_module.c` | OSD stub，提供 `osd_set_motion_visible()` | 本次由 AI 线程调用该函数即可 |
-| `cleanup_module.c` | 逆序释放资源 | 新增 AI 线程后，先停 AI 线程再停 VICAP |
+| `media_osd.c` | OSD stub，提供 `osd_set_motion_visible()` | 本次由 AI 线程调用该函数即可 |
+| `media_cleanup.c` | 逆序释放资源 | 新增 AI 线程后，先停 AI 线程再停 VICAP |
 | `SConscript` | 显式源码白名单 | 新增 `.c` 文件必须手动加入 |
 
 禁止事项：
 
-- 不把 AI 算法写进 `vicap_module.c` 或 `venc_module.c`。
+- 不把 AI 算法写进 `media_vicap.c` 或 `media_venc.c`。
 - 不修改 `vi_bind_venc()` 去绑定 AI 通道。
 - 不在大核实现 RTSP/RTP/网络发送。
 - 不 CPU 遍历 1080P 原始帧画 OSD。
@@ -80,6 +82,9 @@ grep -R "VICAP_CHN_ID_2\|set_chn_attr" -n userapps sample* src 2>/dev/null | hea
 在 `mpp_types.h` 新增：
 
 ```c
+#define AI_GRAY_MAX_WIDTH    640
+#define AI_GRAY_MAX_HEIGHT   480
+
 typedef struct {
     k_u64 frame_id;
     k_u64 timestamp_ms;
@@ -95,7 +100,7 @@ typedef struct {
 } motion_detect_result;
 ```
 
-B 的算法入口建议固定为：
+B 的算法入口固定在 `motion_detect.h`：
 
 ```c
 k_s32 motion_detect_process(const ai_gray_frame_view *frame,
@@ -104,14 +109,15 @@ k_s32 motion_detect_process(const ai_gray_frame_view *frame,
 
 约定：
 
-- `frame->y` 是当前进程内可读的 Y 平面地址，不跨核传递。
-- B 不保存 `frame->y`，只在函数调用期间使用。
+- `frame->y` 是当前进程内可读的 AI 低清通道 NV12 Y 平面地址，可直接当灰度图输入，不跨核传递。
+- B 按 `frame->stride` 访问每一行有效的 `frame->width` 字节，不能假设 `stride == width`。
+- B 不保存 `frame->y`，只在函数调用期间使用；需要跨帧比较时复制 Y 数据到自己的缓存。
 - B 需要前后帧比较时，在自己的模块里保存上一帧副本。
-- B 返回 `is_motion` 和 `motion_score`，不直接操作 OSD。
+- B 返回 `is_motion` 和 `motion_score`，不直接操作 OSD、VICAP、VENC、RT-Thread 线程或帧释放。
 
 ## 4. 推荐新增模块
 
-### `ai_frame_module.c`
+### `motion_ai_frame.c`
 
 职责：只负责 AI 通道取帧、映射 Y 平面、释放帧。
 
@@ -148,11 +154,12 @@ void motion_adapter_deinit(void);
 
 实现要求：
 
-- 在 B 代码未合入前，可提供弱符号 stub 版 `motion_detect_process()`，默认 `is_motion=0`。
+- 在 B 代码未合入前，由 `motion_detect_default.c` 提供弱符号帧差示例版 `motion_detect_process()`，用于验证事件链路。
+- B 合入时提供同名强符号实现即可覆盖默认弱符号；不需要改 AI 线程或适配层。
 - 检测到运动后生成递增 `event_id`。
 - 默认 `event.osd_duration_ms = 1000`。
 
-### `ai_motion_thread.c`
+### `motion_thread.c`
 
 职责：独立 AI 线程，串起取帧、B 算法、OSD 触发。
 
@@ -178,7 +185,7 @@ while running:
 
 - AI 线程不能阻塞 1080P 主链路。
 - 算法跟不上时，优先丢帧/跳帧，而不是压住 VICAP 或 VENC。
-- `cleanup_module.c` 里必须先停 AI 线程，再 stop/deinit VICAP。
+- `media_cleanup.c` 里必须先停 AI 线程，再 stop/deinit VICAP。
 
 ## 5. 修改现有模块
 
@@ -191,7 +198,7 @@ while running:
 - 新增模块函数声明。
 - B 算法入口声明。
 
-### `vb_module.c`
+### `media_vb.c`
 
 新增 AI 低清 buffer pool，推荐：
 
@@ -204,7 +211,7 @@ config.comm_pool[2].mode     = VB_REMAP_MODE_NOCACHE;
 
 如果 SDK sample 显示 VICAP channel 自带 buffer 不需要额外公共 VB pool，也可以不加 pool，但必须在验证记录中说明依据。
 
-### `vicap_module.c`
+### `media_vicap.c`
 
 把当前单通道配置拆为 helper：
 
@@ -240,7 +247,7 @@ pthread_create(stream_thread)
 
 AI 线程必须在 `vicap_start()` 后启动。
 
-### `cleanup_module.c`
+### `media_cleanup.c`
 
 在 `pipeline_cleanup()` 开头加入：
 
@@ -260,9 +267,10 @@ kd_mpi_vicap_deinit()
 显式加入：
 
 ```python
-'ai_frame_module.c',
+'motion_ai_frame.c',
+'motion_detect_default.c',
 'motion_adapter.c',
-'ai_motion_thread.c',
+'motion_thread.c',
 ```
 
 不要改成 `Glob('*.c')`。
@@ -279,7 +287,7 @@ RTT_EXEC_PATH="/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64
 必须确认：
 
 - 新增 `.c` 文件参与编译。
-- `motion_detect_process()` 未合入 B 代码时也能链接。
+- `motion_detect_process()` 未合入 B 代码时也能链接，并使用默认帧差示例实现。
 - SDK 取帧和释放 API 签名正确。
 
 ### 主链路回归

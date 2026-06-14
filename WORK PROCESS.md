@@ -1,5 +1,7 @@
 ## 1. 函数协作关系图
 
+文件命名前缀：`media_*` 对应大核 MPP 底层媒体能力，`stream_*` 对应码流出口和小核推流对接准备，`motion_*` 对应 AI 运动检测闭环。
+
 主初始化链路：
 
 `main() -> vb_init() -> venc_init(VENC_CHN, ENC_BITRATE) -> osd_init() -> vicap_config(SENSOR_TYPE) -> vicap_try_config(sensor_type) -> vicap_set_channel_attr(VICAP_CHN, ...) -> vicap_set_channel_attr(AI_VICAP_CHN, ...) -> vi_bind_venc() -> vicap_start() -> ai_motion_thread_start() -> stream_export_init(STREAM_EXPORT_LOCAL_LOG) -> rt_thread_create(stream_thread)`
@@ -34,9 +36,9 @@ AI 低清旁路链路：
 
 关键数据传递：
 - `ai_frame_try_get()` 从 `AI_VICAP_CHN` dump 一帧低清图像，并 mmap Y 平面。
-- `ai_gray_frame_view` 只描述灰度图视图，包含帧号、时间戳、宽高、stride、Y 指针。
+- `ai_gray_frame_view` 只描述灰度图视图，包含帧号、时间戳、宽高、stride、Y 指针；`Y` 来自 NV12 Y 平面，可按灰度图使用。
 - `motion_adapter_process()` 调用可替换的 `motion_detect_process()`。
-- 默认弱符号 `motion_detect_process()` 不产生运动事件；若后续算法覆盖它，运动结果会被包装成 `motion_event_msg`。
+- 默认弱符号 `motion_detect_process()` 由 `motion_detect_default.c` 提供简单帧差示例；若后续算法覆盖它，运动结果会被包装成 `motion_event_msg`。
 - 当 `has_event == K_TRUE` 时，AI 线程调用 `osd_set_motion_visible()`。
 - 无论是否检测到事件，`ai_frame_release()` 都必须释放 mmap 和 dump frame。
 
@@ -78,7 +80,7 @@ AI 低清旁路链路：
    函数调用 `kd_mpi_vicap_dump_frame()` 得到帧信息，再 mmap Y 平面，填出 `ai_gray_frame_view`。这个视图传给 `motion_adapter_process()`。
 
 8. `motion_adapter_process()` 调用 `motion_detect_process()`。
-   当前默认实现是弱符号 stub，结果通常是 `is_motion = 0`，不会产生事件。若后续接入 B 题运动检测算法并覆盖该函数，当检测到运动时会生成 `motion_event_msg`，然后 `ai_motion_thread()` 调用 `osd_set_motion_visible(1, 1000)`。当前 OSD 也是 stub，只打印日志。
+   当前默认实现是弱符号帧差示例，首帧建立基线，后续输出 `is_motion` 和 `motion_score`。若后续接入 B 题运动检测算法并覆盖该函数，当检测到运动时会生成 `motion_event_msg`，然后 `ai_motion_thread()` 调用 `osd_set_motion_visible(1, 1000)`。当前 OSD 也是 stub，只打印日志。
 
 9. 同一时刻，主通道帧在硬件链路中进入 VENC。
    `stream_thread()` 周期性调用 `kd_mpi_venc_query_status()` 查询可用 pack 数，再调用 `kd_mpi_venc_get_stream()` 取出编码结果。
@@ -96,6 +98,6 @@ AI 低清旁路链路：
     码流线程退出并释放 `g_stream_exit_sem`；清理阶段调用 `pipeline_cleanup()`，按逆序停止 AI 线程、VICAP、绑定关系、VENC 和 VB。
 
 最终对外输出：
-- 终端日志：包括初始化结果、`VI->VENC bind OK`、`Get NALU, Size: ...`、统计帧率、AI/OSD stub 日志和清理日志。
+- 终端日志：包括初始化结果、`VI->VENC bind OK`、`Get NALU, Size: ...`、统计帧率、AI 运动事件、OSD stub 日志和清理日志。
 - 程序退出状态：成功时打印 `Pipeline test PASSED.` 并返回 `0`；失败时打印 `Pipeline test FAILED ...` 并返回错误码。
 - 当前版本不生成视频文件、不启动网络服务；码流导出只做本地日志打印。

@@ -4,6 +4,8 @@
 #include "k_type.h"
 
 #define MPP_MAX_STREAM_PACKS 8
+#define AI_GRAY_MAX_WIDTH    640
+#define AI_GRAY_MAX_HEIGHT   480
 
 typedef enum {
     STREAM_EXPORT_LOCAL_LOG = 0,

@@ -5,6 +5,26 @@ static rt_sem_t g_ai_motion_exit_sem = RT_NULL;
 static volatile int g_ai_motion_running;
 static k_bool g_ai_motion_started;
 
+static k_bool wait_ai_motion_thread_exit(k_u32 timeout_ms)
+{
+    k_u32 waited_ms = 0;
+
+    if (g_ai_motion_exit_sem == RT_NULL)
+        return K_TRUE;
+
+    while (waited_ms < timeout_ms) {
+        k_s32 ret = rt_sem_take(g_ai_motion_exit_sem,
+                                rt_tick_from_millisecond(THREAD_EXIT_POLL_MS));
+        if (ret == RT_EOK)
+            return K_TRUE;
+
+        waited_ms += THREAD_EXIT_POLL_MS;
+    }
+
+    LOG("AI motion thread exit wait timeout after %ums", timeout_ms);
+    return K_FALSE;
+}
+
 static void ai_motion_thread(void *arg)
 {
     k_u32 timeout_count = 0;
@@ -114,15 +134,19 @@ void ai_motion_thread_stop(void)
 
     g_ai_motion_running = 0;
     if (g_ai_motion_exit_sem != RT_NULL) {
-        k_s32 ret = rt_sem_take(g_ai_motion_exit_sem, RT_WAITING_FOREVER);
-        CHECK_RET(ret, __func__, __LINE__);
-        rt_sem_delete(g_ai_motion_exit_sem);
-        g_ai_motion_exit_sem = RT_NULL;
+        if (wait_ai_motion_thread_exit(AI_THREAD_EXIT_TIMEOUT_MS)) {
+            rt_sem_delete(g_ai_motion_exit_sem);
+            g_ai_motion_exit_sem = RT_NULL;
+        } else {
+            LOG("AI motion thread still stopping; continue cleanup");
+        }
     }
-    g_ai_motion_tid = RT_NULL;
-    g_ai_motion_started = K_FALSE;
+    if (g_ai_motion_exit_sem == RT_NULL) {
+        g_ai_motion_tid = RT_NULL;
+        g_ai_motion_started = K_FALSE;
 
-    motion_adapter_deinit();
-    ai_frame_channel_deinit();
-    LOG("AI motion thread cleanup OK");
+        motion_adapter_deinit();
+        ai_frame_channel_deinit();
+        LOG("AI motion thread cleanup OK");
+    }
 }

@@ -11,7 +11,8 @@
 
 #include "mpp_pipeline.h"
 
-volatile int g_running = 1;
+volatile sig_atomic_t g_running = 1;
+static volatile sig_atomic_t g_stop_signal;
 pipeline_status g_status = STATUS_IDLE;
 rt_thread_t g_stream_tid = RT_NULL;
 rt_sem_t g_stream_exit_sem = RT_NULL;
@@ -21,8 +22,28 @@ rt_sem_t g_stream_exit_sem = RT_NULL;
  * ================================================================ */
 static void sig_handler(int signo)
 {
-    LOG("Received signal %d, stopping...", signo);
+    g_stop_signal = signo;
     g_running = 0;
+}
+
+static k_bool wait_stream_thread_exit(k_u32 timeout_ms)
+{
+    k_u32 waited_ms = 0;
+
+    if (g_stream_exit_sem == RT_NULL)
+        return K_TRUE;
+
+    while (waited_ms < timeout_ms) {
+        k_s32 ret = rt_sem_take(g_stream_exit_sem,
+                                rt_tick_from_millisecond(THREAD_EXIT_POLL_MS));
+        if (ret == RT_EOK)
+            return K_TRUE;
+
+        waited_ms += THREAD_EXIT_POLL_MS;
+    }
+
+    LOG("Stream thread exit wait timeout after %ums", timeout_ms);
+    return K_FALSE;
 }
 
 /* ================================================================
@@ -113,6 +134,8 @@ int main(void)
         while (g_running && difftime(time(NULL), start) < AUTO_EXIT_SEC) {
             rt_thread_mdelay(1000);
         }
+        if (!g_running && g_stop_signal)
+            LOG("Received signal %d, stopping...", (int)g_stop_signal);
         if (g_running) {
             LOG("Auto-exit timeout reached");
             g_running = 0;
@@ -121,12 +144,14 @@ int main(void)
 
     /* 等待 RT 采集线程自然退出 */
     if (g_stream_exit_sem != RT_NULL) {
-        ret = rt_sem_take(g_stream_exit_sem, RT_WAITING_FOREVER);
-        CHECK_RET(ret, __func__, __LINE__);
-        rt_sem_delete(g_stream_exit_sem);
-        g_stream_exit_sem = RT_NULL;
+        if (wait_stream_thread_exit(STREAM_THREAD_EXIT_TIMEOUT_MS)) {
+            rt_sem_delete(g_stream_exit_sem);
+            g_stream_exit_sem = RT_NULL;
+            g_stream_tid = RT_NULL;
+        } else {
+            LOG("Continue cleanup to unblock stream thread");
+        }
     }
-    g_stream_tid = RT_NULL;
 
 cleanup:
     pipeline_cleanup();

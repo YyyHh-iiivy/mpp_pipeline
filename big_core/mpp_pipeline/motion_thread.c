@@ -25,6 +25,15 @@ static k_bool wait_ai_motion_thread_exit(k_u32 timeout_ms)
     return K_FALSE;
 }
 
+/*
+ * AI motion worker thread.
+ *
+ * The loop owns the full per-frame lifecycle:
+ * 1. ai_frame_try_get() dumps and maps one AI-channel Y plane.
+ * 2. motion_adapter_process() runs detection and builds a motion event.
+ * 3. osd_set_motion_visible() is called only when an event is produced.
+ * 4. ai_frame_release() always returns the dump frame and mmap mapping.
+ */
 static void ai_motion_thread(void *arg)
 {
     k_u32 timeout_count = 0;

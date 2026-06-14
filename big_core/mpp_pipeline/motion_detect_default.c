@@ -3,6 +3,15 @@
 
 #include "motion_detect.h"
 
+/*
+ * Default weak motion detector used before the real B-side algorithm is linked.
+ *
+ * The input is the AI low-resolution NV12 Y plane, so each byte is already a
+ * luma/grayscale sample. The implementation keeps one private baseline copy,
+ * compares the current frame against it, and reports motion_score as the
+ * percentage of pixels whose absolute luma delta crosses MOTION_PIXEL_DELTA.
+ * A strong motion_detect_process() from the algorithm team overrides this file.
+ */
 #define MOTION_BASELINE_MAX_SIZE  (AI_GRAY_MAX_WIDTH * AI_GRAY_MAX_HEIGHT)
 #define MOTION_PIXEL_DELTA        24U
 #define MOTION_RATIO_THRESHOLD    2U
@@ -37,6 +46,7 @@ static void motion_copy_baseline(const ai_gray_frame_view *frame)
     k_u32 row;
 
     for (row = 0; row < frame->height; ++row) {
+        /* Copy only valid pixels. Bytes after width are alignment padding. */
         memcpy(g_motion_baseline + row * frame->width,
                frame->y + row * frame->stride,
                frame->width);
@@ -70,6 +80,7 @@ __attribute__((weak)) k_s32 motion_detect_process(const ai_gray_frame_view *fram
     }
 
     for (row = 0; row < frame->height; ++row) {
+        /* stride is the source row pitch; baseline is tightly packed by width. */
         const k_u8 *cur = frame->y + row * frame->stride;
         const k_u8 *base = g_motion_baseline + row * frame->width;
         k_u32 col;

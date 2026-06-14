@@ -20,12 +20,11 @@ static k_u64 g_next_nalu_msg_seq;
 static nalu_ipc_pending_item g_pending[NALU_IPC_PENDING_MAX];
 
 static k_datafifo_params_s g_nalu_fifo_params = {
-    NALU_IPC_FIFO_ENTRIES,
-    MPP_NALU_IPC_ITEM_SIZE,
-    K_TRUE,
-    DATAFIFO_WRITER
+    NALU_IPC_FIFO_ENTRIES,  /**< The number of items in the ring buffer*/
+    MPP_NALU_IPC_ITEM_SIZE, /**< Item size*/
+    K_TRUE,                 /**<Whether the data buffer release by writer*/
+    DATAFIFO_WRITER         /**<READER or WRITER*/
 };
-
 static void nalu_ipc_msg_to_release_stream(const mpp_nalu_ipc_msg *msg,
                                            k_venc_pack *packs,
                                            k_venc_stream *stream)
@@ -54,7 +53,7 @@ static void nalu_ipc_release_msg_stream(const mpp_nalu_ipc_msg *msg)
         return;
 
     nalu_ipc_msg_to_release_stream(msg, packs, &stream);
-    ret = kd_mpi_venc_release_stream(msg->chn, &stream);
+    ret = kd_mpi_venc_release_stream(msg->chn, &stream); //释放内存buffer
     CHECK_RET(ret, __func__, __LINE__);
 }
 

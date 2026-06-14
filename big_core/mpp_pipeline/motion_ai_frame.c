@@ -38,6 +38,15 @@ k_s32 ai_frame_channel_init(void)
     return 0;
 }
 
+/*
+ * Try to fetch one low-resolution AI frame from VICAP channel 2.
+ *
+ * On success, view describes only the NV12 Y plane, which the motion algorithm
+ * treats as grayscale input. handle owns the SDK dump frame and mmap mapping;
+ * the caller must pass it to ai_frame_release() exactly once. view->stride is
+ * copied from the SDK frame info and must be used when walking rows because
+ * DMA alignment can make stride larger than width.
+ */
 k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle)
 {
     k_s32 ret;

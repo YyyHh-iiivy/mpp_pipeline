@@ -28,12 +28,12 @@ typedef struct {
 } snapshot_request_msg;
 
 typedef struct {
-    k_u64 frame_id;
-    k_u64 timestamp_ms;
-    k_u32 width;
-    k_u32 height;
-    k_u32 stride;
-    const k_u8 *y;
+    k_u64 frame_id;      /* Monotonic frame index assigned after each AI dump. */
+    k_u64 timestamp_ms;  /* Frame PTS in ms when SDK provides it; otherwise local time. */
+    k_u32 width;         /* Valid luma pixels per row. */
+    k_u32 height;        /* Valid luma rows. */
+    k_u32 stride;        /* Bytes between two adjacent Y rows; may be larger than width. */
+    const k_u8 *y;       /* Read-only NV12 Y plane mapped in this process. */
 } ai_gray_frame_view;
 
 typedef struct {

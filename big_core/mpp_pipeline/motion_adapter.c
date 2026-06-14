@@ -17,6 +17,15 @@ k_s32 motion_adapter_init(void)
     return 0;
 }
 
+/*
+ * Convert one algorithm result into a pipeline event.
+ *
+ * This function is the boundary between B-side motion detection and the
+ * pipeline control path. It calls motion_detect_process(), then wraps
+ * result.is_motion/result.motion_score into motion_event_msg for the AI
+ * thread. It deliberately does not read VICAP/VENC buffers, release frames,
+ * or control OSD directly; those responsibilities stay in the caller.
+ */
 k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
                              motion_event_msg *event,
                              k_bool *has_event)

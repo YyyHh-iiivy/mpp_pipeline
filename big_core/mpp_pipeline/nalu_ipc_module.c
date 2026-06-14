@@ -15,7 +15,7 @@ typedef struct {
 static k_datafifo_handle g_nalu_fifo = K_DATAFIFO_INVALID_HANDLE;
 static k_bool g_nalu_fifo_inited = K_FALSE;
 static k_u64 g_nalu_fifo_phy_addr;
-static k_u64 g_nalu_seq;
+static k_u64 g_next_nalu_msg_seq;
 /* Tracks streams that were handed to DATAFIFO but not yet READ_DONE by Linux. */
 static nalu_ipc_pending_item g_pending[NALU_IPC_PENDING_MAX];
 
@@ -83,13 +83,13 @@ static nalu_ipc_pending_item *nalu_ipc_alloc_pending(void)
     return NULL;
 }
 
-static void nalu_ipc_release_callback(void *p_stream)
+static void nalu_ipc_release_callback(void *datafifo_item)
 {
-    mpp_nalu_ipc_msg *msg = (mpp_nalu_ipc_msg *)p_stream;
+    mpp_nalu_ipc_msg *msg = (mpp_nalu_ipc_msg *)datafifo_item;
     nalu_ipc_pending_item *pending = nalu_ipc_find_pending(msg);
 
     if (!pending) {
-        LOG("NALU IPC release callback: unknown stream msg=%p", p_stream);
+        LOG("NALU IPC release callback: unknown stream msg=%p", datafifo_item);
         return;
     }
 
@@ -105,7 +105,7 @@ k_s32 nalu_ipc_init(void)
         return 0;
 
     memset(g_pending, 0, sizeof(g_pending));
-    g_nalu_seq = 0;
+    g_next_nalu_msg_seq = 0;
     g_nalu_fifo_phy_addr = 0;
 
     ret = kd_datafifo_open(&g_nalu_fifo, &g_nalu_fifo_params);
@@ -150,7 +150,7 @@ static void nalu_ipc_build_msg(mpp_nalu_ipc_msg *msg,
     msg->version = MPP_NALU_IPC_VERSION;
     msg->chn = chn;
     msg->pack_cnt = stream->pack_cnt;
-    msg->seq = ++g_nalu_seq;
+    msg->seq = ++g_next_nalu_msg_seq;
     if (stream->pack_cnt > 0)
         msg->frame_pts = stream->pack[0].pts;
 

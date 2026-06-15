@@ -1,3 +1,9 @@
+/**
+  - pack = 单个码流块的描述
+  - stream = 一帧/一组 pack 的 SDK 容器
+  - msg = 跨核传输用的自定义容器
+  - submit = 把当前 stream 转成 msg，交给 DATAFIFO
+   */
 #include "mpp_pipeline.h"
 
 #include "k_datafifo.h"
@@ -57,6 +63,7 @@ static void nalu_ipc_release_msg_stream(const mpp_nalu_ipc_msg *msg)
     CHECK_RET(ret, __func__, __LINE__);
 }
 
+//小核读完后，找回这个“释放凭据”
 static nalu_ipc_pending_item *nalu_ipc_find_pending(const mpp_nalu_ipc_msg *msg)
 {
     if (!msg)
@@ -72,7 +79,8 @@ static nalu_ipc_pending_item *nalu_ipc_find_pending(const mpp_nalu_ipc_msg *msg)
     return NULL;
 }
 
-static nalu_ipc_pending_item *nalu_ipc_alloc_pending(void)
+//发给小核前，找地方存“释放凭据”
+static nalu_ipc_pending_item *nalu_ipc_alloc_pending(void) // 寻找可用pending item
 {
     for (k_u32 i = 0; i < NALU_IPC_PENDING_MAX; i++) {
         if (!g_pending[i].in_use)
@@ -114,6 +122,7 @@ k_s32 nalu_ipc_init(void)
         return ret;
     }
 
+    /**<Get the physic address of ring buffer*/
     ret = kd_datafifo_cmd(g_nalu_fifo, DATAFIFO_CMD_GET_PHY_ADDR, &g_nalu_fifo_phy_addr);
     if (ret) {
         LOG("DATAFIFO_CMD_GET_PHY_ADDR failed! ret=0x%x", ret);
@@ -122,6 +131,8 @@ k_s32 nalu_ipc_init(void)
         return ret;
     }
 
+    /*<When bDataReleaseByWriter is K_TRUE, 
+    the writer should call this to register release callback*/
     ret = kd_datafifo_cmd(g_nalu_fifo,
                           DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK,
                           nalu_ipc_release_callback);
@@ -186,6 +197,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
         return ret;
     }
 
+    /**<Get available write length*/
     ret = kd_datafifo_cmd(g_nalu_fifo,
                           DATAFIFO_CMD_GET_AVAIL_WRITE_LEN,
                           &avail_write_len);
@@ -214,6 +226,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
         return ret;
     }
 
+    /**<When the writer buffer is write done, the writer should call this function*/
     ret = kd_datafifo_cmd(g_nalu_fifo, DATAFIFO_CMD_WRITE_DONE, NULL);
     if (ret) {
         LOG("DATAFIFO_CMD_WRITE_DONE failed! ret=0x%x", ret);

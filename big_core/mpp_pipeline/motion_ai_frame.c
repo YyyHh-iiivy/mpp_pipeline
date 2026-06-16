@@ -43,21 +43,21 @@ k_s32 ai_frame_channel_init(void)
  * Try to fetch one low-resolution AI frame from VICAP channel 2.
  *
  * On success, view describes only the NV12 Y plane, which the motion algorithm
- * treats as grayscale input. handle owns the SDK dump frame and mmap mapping;
- * the caller must pass it to ai_frame_release() exactly once. view->stride is
- * copied from the SDK frame info and must be used when walking rows because
- * DMA alignment can make stride larger than width.
+ * treats as grayscale input. ai_frame_handle_out owns the SDK dump frame and
+ * mmap mapping; the caller must pass it to ai_frame_release() exactly once.
+ * view->stride is copied from the SDK frame info and must be used when walking
+ * rows because DMA alignment can make stride larger than width.
  */
-k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle)
+k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **ai_frame_handle_out)
 {
     k_s32 ret;
     ai_frame_handle *frame_handle;
 
-    if (!view || !handle)
+    if (!view || !ai_frame_handle_out)
         return -1;
 
     memset(view, 0, sizeof(*view));
-    *handle = NULL;
+    *ai_frame_handle_out = NULL;
 
     //成功时返回一个指向分配好的内存的 void * 指针；失败则返回 NULL
     frame_handle = (ai_frame_handle *)calloc(1, sizeof(*frame_handle));
@@ -66,18 +66,11 @@ k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle)
 
 /**
  * @brief dump frame from the VICAP 从VICAP中提取帧
- *
  * @param [in] dev_num device number
  * @param [in] chn_num channel number
  * @param [in] foramt  dump data format
  * @param [out] vf_info Video frame information obtained
  * @param [in] milli_sec  timeout value
- * @return k_s32
- * @retval 0 success
- * @retval "not 0" see err code
- * @see K_ERR_CODE_E
- * @note
- *
  */
     ret = kd_mpi_vicap_dump_frame(VICAP_DEV, AI_VICAP_CHN, VICAP_DUMP_YUV,
                                   &frame_handle->frame_info,
@@ -95,16 +88,12 @@ k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle)
     }
 
 /**
- * @brief Maps the memory storage address no cache 映射内存存储地址，无缓存
- *
+ * @brief Maps the memory storage address no cache 
+ *          把 MPP/VICAP 给的“物理地址”映射成当前程序 CPU 可以直接访问的“虚拟地址”
  * @param [in] phy_addr Start address of the memory to be mapped 要映射的内存起始地址
  * @param [in] size Number of mapped bytes 映射的字节数 
- * @return void*
- * @retval 0 Invalid address
- * @retval "not 0" Valid address
- * @note
- * - Only physical memory regions requested by the underlying using MMZ can be mapped.
- * - For memory areas belonging to VB, the mapping size cannot exceed the size of VB POOL.
+ * - 只有由底层使用MMZ请求的物理内存区域才能被映射。
+ * - 对于VB内存区域，映射的字节数不能超过VB POOL的大小。
  */
     frame_handle->virt_addr = kd_mpi_sys_mmap(frame_handle->frame_info.v_frame.phys_addr[0],
                                               frame_handle->map_size);
@@ -122,15 +111,15 @@ k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle)
     view->height = frame_handle->frame_info.v_frame.height;
     view->stride = ai_frame_stride(&frame_handle->frame_info);
     view->y = (const k_u8 *)frame_handle->virt_addr;
-    *handle = frame_handle;
+    *ai_frame_handle_out = frame_handle;
 
     return 0;
 }
 
-k_s32 ai_frame_release(void *handle)
+k_s32 ai_frame_release(void *ai_frame_handle_ptr)
 {
     k_s32 ret = 0;
-    ai_frame_handle *frame_handle = (ai_frame_handle *)handle;
+    ai_frame_handle *frame_handle = (ai_frame_handle *)ai_frame_handle_ptr;
 
     if (!frame_handle)
         return 0;

@@ -47,9 +47,9 @@ static void ai_motion_thread(void *arg)
         ai_gray_frame_view frame;
         motion_event_msg event;
         k_bool has_event = K_FALSE;
-        void *handle = NULL;
+        void *ai_frame_handle = NULL;
 
-        ret = ai_frame_try_get(&frame, &handle);
+        ret = ai_frame_try_get(&frame, &ai_frame_handle);
         if (ret) {
             if ((timeout_count++ % 100) == 0)
                 LOG("AI frame dump timeout/no frame ret=0x%x", ret);
@@ -59,6 +59,15 @@ static void ai_motion_thread(void *arg)
         timeout_count = 0;
         frame_count++;
 
+/*
+typedef struct {
+    k_u32 event_id;
+    k_u64 detect_time_ms;
+    k_u32 motion_score;
+    k_u32 osd_duration_ms;
+    k_u32 request_snapshot;
+} motion_event_msg;
+*/
         ret = motion_adapter_process(&frame, &event, &has_event);
         if (!ret && has_event) {
             LOG("Motion detected: event_id=%u score=%u duration=%ums",
@@ -66,7 +75,7 @@ static void ai_motion_thread(void *arg)
             osd_set_motion_visible(1, event.osd_duration_ms);
         }
 
-        ret = ai_frame_release(handle);
+        ret = ai_frame_release(ai_frame_handle);
         if (ret)
             LOG("ai_frame_release failed! ret=0x%x", ret);
     }

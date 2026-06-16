@@ -1,3 +1,4 @@
+/*主要做“算法结果到管线事件”的适配*/
 #include "mpp_pipeline.h"
 
 #define MOTION_CONFIRM_FRAMES   3U
@@ -31,13 +32,10 @@ k_s32 motion_adapter_init(void)
 }
 
 /*
- * Convert one algorithm result into a pipeline event.
- *
- * This function is the boundary between B-side motion detection and the
- * pipeline control path. It calls motion_detect_process(), then wraps
- * result.is_motion/result.motion_score into motion_event_msg for the AI
- * thread. It deliberately does not read VICAP/VENC buffers, release frames,
- * or control OSD directly; those responsibilities stay in the caller.
+该函数是B侧运动检测与管道控制路径之间的分界点。
+它调用motion_detect_process()，
+然后将result.is_motion/result.motion_score封装为motion_event_msg，传递给AI线程。
+它故意不读取VICAP/VENC缓冲区、释放帧或直接控制OSD；这些责任仍由调用方负责。
  */
 k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
                              motion_event_msg *event,

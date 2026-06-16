@@ -138,8 +138,8 @@ k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms);
 void osd_deinit(void);
 
 k_s32 ai_frame_channel_init(void);
-k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **handle);
-k_s32 ai_frame_release(void *handle);
+k_s32 ai_frame_try_get(ai_gray_frame_view *view, void **ai_frame_handle_out);
+k_s32 ai_frame_release(void *ai_frame_handle_ptr);
 void ai_frame_channel_deinit(void);
 
 k_s32 motion_adapter_init(void);

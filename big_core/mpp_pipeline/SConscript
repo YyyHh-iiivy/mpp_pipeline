@@ -17,6 +17,7 @@ src = [
     'media_osd.c',
     'motion_ai_frame.c',
     'motion_detect_default.c',
+    'motion_detect.c',
     'motion_adapter.c',
     'motion_thread.c',
 ]

@@ -17,6 +17,7 @@ src = [
     'mpp_pipeline/media_osd.c',
     'mpp_pipeline/motion_ai_frame.c',
     'mpp_pipeline/motion_detect_default.c',
+    'mpp_pipeline/motion_detect.c',
     'mpp_pipeline/motion_adapter.c',
     'mpp_pipeline/motion_thread.c',
 ]

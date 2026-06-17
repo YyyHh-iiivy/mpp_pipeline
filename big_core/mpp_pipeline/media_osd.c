@@ -414,9 +414,9 @@ k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
         rt_timer_stop(g_osd_hide_timer);
 
     /*
-     * 消抖: AI 线程可能连续多帧检测到运动。
+     * 幂等/续期保护: AI 线程可能连续请求显示或隐藏 OSD。
      * 如果 OSD 已经处于目标显隐状态，就不重复下发 VENC 2D 参数，
-     * 只续期自动隐藏 timer，避免每帧 set_2d_osd_param() 堵住控制路径。
+     * 只续期自动隐藏 timer，避免每次请求都调用 set_2d_osd_param()。
      */
     g_osd_hide_deadline_ms = 0;
     alpha_changed = (g_osd_attr.osd_alpha != target_alpha);

@@ -118,7 +118,8 @@ extern rt_sem_t g_stream_exit_sem;
 #define LOG(fmt, ...)  printf("[MPP] " fmt "\n", ##__VA_ARGS__)
 
 k_s32 vb_init(void);
-k_s32 venc_init(k_u32 chn, k_u32 bitrate);
+k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate);
+k_s32 venc_start_chn(k_u32 chn);
 k_s32 vicap_try_config(k_vicap_sensor_type sensor_type);
 k_s32 vicap_config(k_vicap_sensor_type sensor_type);
 k_s32 vi_bind_venc(void);

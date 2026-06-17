@@ -10,6 +10,8 @@ static stream_export_mode g_stream_export_mode = STREAM_EXPORT_LOCAL_LOG;
 static k_u32 g_stream_export_frame_count = 0;
 static k_bool g_stream_export_inited = K_FALSE;
 
+#define LOCAL_LOG_FRAME_INTERVAL  30U
+
 static const char *stream_export_mode_name(stream_export_mode mode)
 {
     if (mode == STREAM_EXPORT_DATAFIFO)
@@ -43,8 +45,11 @@ static k_s32 stream_export_submit_local_log(const k_venc_stream *stream)
     for (k_u32 i = 0; i < stream->pack_cnt; i++) {
         if (stream->pack[i].type != K_VENC_HEADER) {
             g_stream_export_frame_count++;
-            LOG("Get NALU, Size: %u bytes  [frame #%u]",
-                stream->pack[i].len, g_stream_export_frame_count);
+            if (g_stream_export_frame_count == 1 ||
+                (g_stream_export_frame_count % LOCAL_LOG_FRAME_INTERVAL) == 0) {
+                LOG("Get NALU, Size: %u bytes  [frame #%u]",
+                    stream->pack[i].len, g_stream_export_frame_count);
+            }
         } else {
             LOG("Get NALU (SPS/PPS header), Size: %u bytes", stream->pack[i].len);
         }

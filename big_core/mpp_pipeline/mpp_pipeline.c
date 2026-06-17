@@ -66,35 +66,40 @@ int main(void)
     ret = vb_init();
     if (ret) goto cleanup;
 
-    /* Step 2: VENC 编码通道 */
-    ret = venc_init(VENC_CHN, ENC_BITRATE);
+    /* Step 2: VENC 编码通道创建 */
+    ret = venc_create_chn(VENC_CHN, ENC_BITRATE);
     if (ret) goto cleanup;
 
+    /* Step 3: OSD 依赖 VENC 2D attach，必须在 VENC start 之前完成 */
     ret = osd_init();
     if (ret) goto cleanup;
 
-    /* Step 3: VICAP 摄像头配置 (GC2093) */
+    /* Step 4: 启动 VENC 通道，确保 2D OSD 已经附着到通道 */
+    ret = venc_start_chn(VENC_CHN);
+    if (ret) goto cleanup;
+
+    /* Step 5: VICAP 摄像头配置 (GC2093) */
     ret = vicap_config(SENSOR_TYPE);
     if (ret) goto cleanup;
 
-    /* Step 4: 硬件绑定 VI -> VENC */
+    /* Step 6: 硬件绑定 VI -> VENC */
     ret = vi_bind_venc();
     if (ret) goto cleanup;
 
-    /* Step 5: 启动 VICAP 流 */
+    /* Step 7: 启动 VICAP 流 */
     ret = vicap_start();
     if (ret) goto cleanup;
 
     ret = ai_motion_thread_start();
     if (ret) goto cleanup;
 
-    ret = stream_export_init(STREAM_EXPORT_DATAFIFO);
-    // ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
+    // ret = stream_export_init(STREAM_EXPORT_DATAFIFO);
+    ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
     if (ret) goto cleanup;
 
     g_status = STATUS_RUNNING;
 
-    /* Step 6: 创建 RT-Thread 码流采集线程 */
+    /* Step 8: 创建 RT-Thread 码流采集线程 */
     g_stream_exit_sem = rt_sem_create("strdone", 0, RT_IPC_FLAG_FIFO);
     if (g_stream_exit_sem == RT_NULL) {
         LOG("rt_sem_create(strdone) failed!");

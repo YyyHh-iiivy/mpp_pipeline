@@ -9,17 +9,17 @@
  * 当前 VICAP->VENC 硬件绑定链路是否实际降帧，要以 stream_thread 统计为准。
  * ================================================================ */
 /**
- * @brief 初始化VENC（视频编码）通道
- * 
- * 该函数创建并启动一个H.265编码通道，配置为CBR码率控制模式。
+ * @brief 创建VENC（视频编码）通道
+ *
+ * 该函数只负责创建H.265编码通道，配置为CBR码率控制模式。
  * src_frame_rate/dst_frame_rate 按官方定义分别表示VENC通道输入帧率和目标帧率，
  * 但它们不是VICAP侧的硬件丢帧配置。
- * 
+ *
  * @param chn 通道号
  * @param bitrate 目标码率（kbps）
  * @return k_s32 成功返回0，失败返回错误码
  */
-k_s32 venc_init(k_u32 chn, k_u32 bitrate)
+k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
 {
     k_s32 ret;                                  // 返回值，用于存储API调用结果
     k_venc_chn_attr attr;                       // 视频编码通道属性结构体
@@ -48,6 +48,17 @@ k_s32 venc_init(k_u32 chn, k_u32 bitrate)
     }
     g_status = STATUS_VENC_CREATED;             // 更新全局状态为VENC已创建
 
+    LOG("VENC chn=%u create OK", chn);         // 记录创建成功的日志
+    return 0;                                   // 返回成功状态
+}
+
+/* ================================================================
+ * 启动 VENC 编码通道
+ * ================================================================ */
+k_s32 venc_start_chn(k_u32 chn)
+{
+    k_s32 ret;
+
     ret = kd_mpi_venc_start_chn(chn);           // 启动VENC通道
     if (ret) {                                  // 检查通道启动是否成功
         LOG("kd_mpi_venc_start_chn failed! ret=0x%x", ret);  // 记录启动失败的日志
@@ -55,7 +66,7 @@ k_s32 venc_init(k_u32 chn, k_u32 bitrate)
     }
     g_status = STATUS_VENC_STARTED;             // 更新全局状态为VENC已启动
 
-    LOG("VENC chn=%u init OK", chn);          // 记录初始化成功的日志
+    LOG("VENC chn=%u start OK", chn);          // 记录启动成功的日志
     return 0;                                   // 返回成功状态
 }
 
@@ -133,6 +144,13 @@ void stream_thread(void *arg)
         }
         get_fail_count = 0;
 
+        if (!g_running) {
+            ret = kd_mpi_venc_release_stream(chn, &output);
+            if (ret)
+                LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);
+            break;
+        }
+
         /* 遍历所有 pack, 只统计非 header 的数据帧 */
         for (k_u32 i = 0; i < output.pack_cnt; i++) {  // 遍历所有编码包
             if (output.pack[i].type != K_VENC_HEADER) {  // 检查是否为非头部帧（即实际数据帧）
@@ -152,6 +170,12 @@ void stream_thread(void *arg)
                 LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);  // 记录错误日志
             }
         }
+
+        if (!g_running)
+            break;
+
+        /* STREAM_EXPORT_LOCAL_LOG 下采集线程可能持续满速运行；主动让出调度，保证 Ctrl+C 信号路径及时执行。 */
+        rt_thread_mdelay(1);
 
         /* 每 150 帧统计一次帧率；15fps 时约 10 秒，30fps 时约 5 秒 */
         if (interval_frames >= 150) {           // 当区间帧数达到150时进行统计

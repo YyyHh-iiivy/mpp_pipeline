@@ -12,6 +12,7 @@
 #include "mpp_pipeline.h"
 
 volatile sig_atomic_t g_running = 1;
+volatile sig_atomic_t g_stream_running = 0;
 static volatile sig_atomic_t g_stop_signal;
 pipeline_status g_status = STATUS_IDLE;
 rt_thread_t g_stream_tid = RT_NULL;
@@ -24,26 +25,6 @@ static void sig_handler(int signo)
 {
     g_stop_signal = signo;
     g_running = 0;
-}
-
-static k_bool wait_stream_thread_exit(k_u32 timeout_ms)
-{
-    k_u32 waited_ms = 0;
-
-    if (g_stream_exit_sem == RT_NULL)
-        return K_TRUE;
-
-    while (waited_ms < timeout_ms) {
-        k_s32 ret = rt_sem_take(g_stream_exit_sem,
-                                rt_tick_from_millisecond(THREAD_EXIT_POLL_MS));
-        if (ret == RT_EOK)
-            return K_TRUE;
-
-        waited_ms += THREAD_EXIT_POLL_MS;
-    }
-
-    LOG("Stream thread exit wait timeout after %ums", timeout_ms);
-    return K_FALSE;
 }
 
 /* ================================================================
@@ -121,9 +102,11 @@ int main(void)
         goto cleanup;
     }
 
+    g_stream_running = 1;
     ret = rt_thread_startup(g_stream_tid);
     if (ret != RT_EOK) {
         LOG("rt_thread_startup(mpp_str) failed! ret=%d", ret);
+        g_stream_running = 0;
         rt_thread_delete(g_stream_tid);
         g_stream_tid = RT_NULL;
         rt_sem_delete(g_stream_exit_sem);
@@ -144,17 +127,6 @@ int main(void)
         if (g_running) {
             LOG("Auto-exit timeout reached");
             g_running = 0;
-        }
-    }
-
-    /* 等待 RT 采集线程自然退出 */
-    if (g_stream_exit_sem != RT_NULL) {
-        if (wait_stream_thread_exit(STREAM_THREAD_EXIT_TIMEOUT_MS)) {
-            rt_sem_delete(g_stream_exit_sem);
-            g_stream_exit_sem = RT_NULL;
-            g_stream_tid = RT_NULL;
-        } else {
-            LOG("Continue cleanup to unblock stream thread");
         }
     }
 

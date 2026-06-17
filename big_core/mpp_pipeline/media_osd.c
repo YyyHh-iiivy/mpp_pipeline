@@ -101,6 +101,8 @@ static void osd_hide_thread(void *arg)
 {
     (void)arg;
 
+    LOG("OSD hide thread started");
+
     while (g_osd_hide_running) {
         k_s32 ret = rt_sem_take(g_osd_hide_sem, RT_WAITING_FOREVER);
         if (ret != RT_EOK)
@@ -138,6 +140,8 @@ static void osd_hide_thread(void *arg)
 
     if (g_osd_hide_exit_sem != RT_NULL)
         rt_sem_release(g_osd_hide_exit_sem);
+
+    LOG("OSD hide thread exit");
 }
 
 static k_bool osd_wait_hide_thread_exit(k_u32 timeout_ms)
@@ -221,24 +225,32 @@ static k_s32 osd_control_init(void)
 
 static void osd_control_deinit(void)
 {
-    /* 先停 timer，再唤醒线程退出，最后删除 RT 对象。 */
+    /* 先停 timer，再唤醒线程退出，最后删除线程相关 RT 对象。 */
+    LOG("OSD control timer stop start");
     if (g_osd_hide_timer != RT_NULL)
         rt_timer_stop(g_osd_hide_timer);
+    LOG("OSD control timer stop done");
 
     if (g_osd_hide_tid != RT_NULL) {
+        LOG("OSD control wake hide thread start");
         g_osd_hide_running = 0;
         if (g_osd_hide_sem != RT_NULL)
             rt_sem_release(g_osd_hide_sem);
 
-        if (osd_wait_hide_thread_exit(OSD_THREAD_EXIT_TIMEOUT_MS))
+        LOG("OSD control wake hide thread done");
+        LOG("OSD control wait hide thread exit start");
+        if (osd_wait_hide_thread_exit(OSD_THREAD_EXIT_TIMEOUT_MS)) {
             g_osd_hide_tid = RT_NULL;
+            LOG("OSD control wait hide thread exit done");
+        } else {
+            LOG("OSD hide thread still stopping; force delete");
+            rt_thread_delete(g_osd_hide_tid);
+            g_osd_hide_tid = RT_NULL;
+        }
     }
 
-    if (g_osd_hide_timer != RT_NULL) {
-        rt_timer_delete(g_osd_hide_timer);
-        g_osd_hide_timer = RT_NULL;
-    }
-
+    LOG("OSD control delete sems start");
+    g_osd_hide_timer = RT_NULL;
     if (g_osd_hide_exit_sem != RT_NULL && g_osd_hide_tid == RT_NULL) {
         rt_sem_delete(g_osd_hide_exit_sem);
         g_osd_hide_exit_sem = RT_NULL;
@@ -253,9 +265,22 @@ static void osd_control_deinit(void)
         rt_sem_delete(g_osd_lock);
         g_osd_lock = RT_NULL;
     }
+    LOG("OSD control delete sems done");
 
     g_osd_hide_deadline_ms = 0;
     g_osd_hide_running = 0;
+}
+
+void osd_control_stop(void)
+{
+    if (g_osd_hide_tid == RT_NULL && g_osd_hide_timer == RT_NULL &&
+        g_osd_hide_sem == RT_NULL && g_osd_hide_exit_sem == RT_NULL &&
+        g_osd_lock == RT_NULL)
+        return;
+
+    LOG("OSD control deinit start");
+    osd_control_deinit();
+    LOG("OSD control deinit done");
 }
 
 static void osd_release_buffer(void)
@@ -457,16 +482,20 @@ void osd_deinit(void)
     if (!g_osd_inited && !g_osd_2d_attached && g_osd_block == VB_INVALID_HANDLE)
         return;
 
-    /* 清理时先停自动隐藏线程，确保后面 detach/release 时没有并发 set_param。 */
-    osd_control_deinit();
+    /* osd_control_stop() 在 VENC stop 前执行，避免控制线程与通道停止并发。 */
+    osd_control_stop();
 
     if (g_osd_2d_attached) {
+        LOG("VENC 2D OSD detach start");
         ret = kd_mpi_venc_detach_2d(VENC_CHN);
         CHECK_RET(ret, __func__, __LINE__);
         g_osd_2d_attached = K_FALSE;
+        LOG("VENC 2D OSD detach done");
     }
 
+    LOG("OSD buffer release start");
     osd_release_buffer();
+    LOG("OSD buffer release done");
     memset(&g_osd_attr, 0, sizeof(g_osd_attr));
     g_osd_inited = K_FALSE;
     LOG("VENC 2D OSD deinit OK");

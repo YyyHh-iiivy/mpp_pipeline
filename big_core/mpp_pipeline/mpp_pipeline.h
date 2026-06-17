@@ -105,6 +105,7 @@ typedef enum {
 #define AI_THREAD_EXIT_TIMEOUT_MS       3000
 
 extern volatile sig_atomic_t g_running;
+extern volatile sig_atomic_t g_stream_running;
 extern pipeline_status g_status;
 extern rt_thread_t g_stream_tid;
 extern rt_sem_t g_stream_exit_sem;
@@ -125,6 +126,7 @@ k_s32 vicap_config(k_vicap_sensor_type sensor_type);
 k_s32 vi_bind_venc(void);
 k_s32 vicap_start(void);
 void stream_thread(void *arg);
+void stream_thread_stop(void);
 void pipeline_cleanup(void);
 
 k_s32 stream_export_init(stream_export_mode mode);
@@ -136,6 +138,7 @@ void stream_export_deinit(void);
 
 k_s32 osd_init(void);
 k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms);
+void osd_control_stop(void);
 void osd_deinit(void);
 
 k_s32 ai_frame_channel_init(void);

@@ -103,14 +103,14 @@ void stream_thread(void *arg)
     memset(&output, 0, sizeof(output));
     output.pack = packs;
 
-    while (g_running) {                         // 当程序正在运行时持续循环
+    while (g_stream_running) {                  // cleanup 明确停止前持续 drain VENC
         k_venc_chn_status status;               // VENC通道状态结构体
         k_bool release_by_caller = K_TRUE;       // 导出层返回的释放责任
 
         /* 查询当前有多少个 pack */
         ret = kd_mpi_venc_query_status(chn, &status);  // 查询VENC通道的状态
         if (ret) {                              // 检查查询是否成功
-            if (!g_running)
+            if (!g_stream_running)
                 break;
             if ((query_fail_count++ % 25) == 0)
                 LOG("kd_mpi_venc_query_status failed! ret=0x%x", ret);  // 记录错误日志
@@ -131,7 +131,7 @@ void stream_thread(void *arg)
         /* 有限等待编码完成，保证 Ctrl+C 和自动退出能回收线程 */
         ret = kd_mpi_venc_get_stream(chn, &output, VENC_GET_STREAM_TIMEOUT_MS);
         if (ret) {                              // 检查获取码流是否成功
-            if (!g_running)                      // 如果程序准备退出
+            if (!g_stream_running)               // 如果 cleanup 要求退出
                 break;                           // 跳出循环结束线程
             {
                 k_s32 flush_ret = stream_export_flush();
@@ -144,7 +144,7 @@ void stream_thread(void *arg)
         }
         get_fail_count = 0;
 
-        if (!g_running) {
+        if (!g_stream_running) {
             ret = kd_mpi_venc_release_stream(chn, &output);
             if (ret)
                 LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);
@@ -171,7 +171,7 @@ void stream_thread(void *arg)
             }
         }
 
-        if (!g_running)
+        if (!g_stream_running)
             break;
 
         /* STREAM_EXPORT_LOCAL_LOG 下采集线程可能持续满速运行；主动让出调度，保证 Ctrl+C 信号路径及时执行。 */
@@ -197,4 +197,47 @@ void stream_thread(void *arg)
 
     if (g_stream_exit_sem != RT_NULL)
         rt_sem_release(g_stream_exit_sem);
+}
+
+static k_bool wait_stream_thread_exit(k_u32 timeout_ms)
+{
+    k_u32 waited_ms = 0;
+
+    if (g_stream_exit_sem == RT_NULL)
+        return K_TRUE;
+
+    while (waited_ms < timeout_ms) {
+        k_s32 ret = rt_sem_take(g_stream_exit_sem,
+                                rt_tick_from_millisecond(THREAD_EXIT_POLL_MS));
+        if (ret == RT_EOK)
+            return K_TRUE;
+
+        waited_ms += THREAD_EXIT_POLL_MS;
+    }
+
+    LOG("Stream thread exit wait timeout after %ums", timeout_ms);
+    return K_FALSE;
+}
+
+void stream_thread_stop(void)
+{
+    if (g_stream_tid == RT_NULL && g_stream_exit_sem == RT_NULL)
+        return;
+
+    LOG("stream_thread_stop start");
+    g_stream_running = 0;
+
+    if (g_stream_exit_sem != RT_NULL) {
+        if (wait_stream_thread_exit(STREAM_THREAD_EXIT_TIMEOUT_MS)) {
+            rt_sem_delete(g_stream_exit_sem);
+            g_stream_exit_sem = RT_NULL;
+            g_stream_tid = RT_NULL;
+            LOG("stream_thread_stop done");
+        } else {
+            LOG("stream_thread_stop timeout; continue cleanup");
+        }
+    } else {
+        g_stream_tid = RT_NULL;
+        LOG("stream_thread_stop done");
+    }
 }

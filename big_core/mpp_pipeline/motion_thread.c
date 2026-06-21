@@ -31,8 +31,8 @@ static k_bool wait_ai_motion_thread_exit(k_u32 timeout_ms)
  * The loop owns the full per-frame lifecycle:
  * 1. ai_frame_try_get() dumps and maps one AI-channel Y plane.
  * 2. motion_adapter_process() runs detection and builds a motion event.
- * 3. osd_set_motion_visible() is called only when an event is produced.
- * 4. ai_frame_release() always returns the dump frame and mmap mapping.
+ * 3. ai_frame_release() always returns the dump frame and mmap mapping.
+ * 4. osd_set_motion_visible() is called only after the frame is released.
  */
 static void ai_motion_thread(void *arg)
 {
@@ -48,6 +48,9 @@ static void ai_motion_thread(void *arg)
         motion_event_msg event;
         k_bool has_event = K_FALSE;
         void *ai_frame_handle = NULL;
+        k_s32 release_ret;
+
+        osd_poll_auto_hide();
 
         ret = ai_frame_try_get(&frame, &ai_frame_handle);
         if (ret) {
@@ -69,15 +72,21 @@ typedef struct {
 } motion_event_msg;
 */
         ret = motion_adapter_process(&frame, &event, &has_event);
-        if (!ret && has_event) {
+        release_ret = ai_frame_release(ai_frame_handle);
+        ai_frame_handle = NULL;
+        if (release_ret)
+            LOG("ai_frame_release failed! ret=0x%x", release_ret);
+
+        if (!ret && !release_ret && has_event && g_ai_motion_running && g_running) {
+            k_s32 osd_ret;
+
             LOG("Motion detected: event_id=%u score=%u duration=%ums",
                 event.event_id, event.motion_score, event.osd_duration_ms);
-            osd_set_motion_visible(1, event.osd_duration_ms);
+            LOG("OSD motion request start event_id=%u", event.event_id);
+            osd_ret = osd_set_motion_visible(1, event.osd_duration_ms);
+            LOG("OSD motion request done event_id=%u ret=0x%x",
+                event.event_id, osd_ret);
         }
-
-        ret = ai_frame_release(ai_frame_handle);
-        if (ret)
-            LOG("ai_frame_release failed! ret=0x%x", ret);
     }
 
     LOG("AI motion thread stopped, frames=%u", frame_count);

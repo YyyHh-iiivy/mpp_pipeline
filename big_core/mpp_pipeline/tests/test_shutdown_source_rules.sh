@@ -26,6 +26,35 @@ if printf '%s\n' "$stream_thread_body" | grep -q 'while (g_running)'; then
     exit 1
 fi
 
+ai_motion_file="$root/big_core/mpp_pipeline/motion_thread.c"
+ai_release_line=$(grep -n 'ai_frame_release(ai_frame_handle)' "$ai_motion_file" | head -n1 | cut -d: -f1)
+ai_osd_line=$(grep -n 'osd_set_motion_visible(1' "$ai_motion_file" | head -n1 | cut -d: -f1)
+if [ -z "$ai_release_line" ] || [ -z "$ai_osd_line" ]; then
+    echo "ai motion thread must contain ai_frame_release and osd_set_motion_visible"
+    exit 1
+fi
+
+if [ "$ai_release_line" -ge "$ai_osd_line" ]; then
+    echo "ai_frame_release must run before osd_set_motion_visible"
+    exit 1
+fi
+
+if ! grep -q 'osd_poll_auto_hide();' "$ai_motion_file"; then
+    echo "ai motion thread must poll OSD auto hide"
+    exit 1
+fi
+
+osd_file="$root/big_core/mpp_pipeline/media_osd.c"
+if grep -Eq 'rt_timer_(create|control|start|stop|delete)' "$osd_file"; then
+    echo "OSD auto hide must not use RT timer APIs"
+    exit 1
+fi
+
+if grep -q 'rt_thread_create("osdhide"' "$osd_file"; then
+    echo "OSD auto hide must not create a background hide thread"
+    exit 1
+fi
+
 cleanup_file="$root/big_core/mpp_pipeline/media_cleanup.c"
 ai_motion_stop_line=$(grep -n 'ai_motion_thread_stop();' "$cleanup_file" | head -n1 | cut -d: -f1)
 osd_control_stop_line=$(grep -n 'osd_control_stop();' "$cleanup_file" | head -n1 | cut -d: -f1)
@@ -85,7 +114,7 @@ if [ "$osd_deinit_line" -ge "$venc_destroy_line" ]; then
     exit 1
 fi
 
-if grep -q 'rt_timer_delete(g_osd_hide_timer)' "$root/big_core/mpp_pipeline/media_osd.c"; then
+if grep -q 'rt_timer_delete(g_osd_hide_timer)' "$osd_file"; then
     echo "osd control cleanup must not call rt_timer_delete on shutdown path"
     exit 1
 fi

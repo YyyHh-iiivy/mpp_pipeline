@@ -139,7 +139,6 @@ void stream_export_deinit(void);
 k_s32 osd_init(void);
 k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms);
 k_s32 osd_poll_auto_hide(void);
-void osd_control_stop(void);
 void osd_deinit(void);
 
 k_s32 ai_frame_channel_init(void);

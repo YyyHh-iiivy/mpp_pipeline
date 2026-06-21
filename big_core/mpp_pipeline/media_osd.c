@@ -15,7 +15,6 @@
 #define OSD_BUF_SIZE     ALIGN_UP(MOTION_DETECTED_OSD_SIZE, 0x1000)
 
 #define OSD_HIDE_DEADLINE_GRACE_MS  20
-#define OSD_LOCK_TIMEOUT_MS         100
 
 /* OSD 图片 buffer 和 VENC 2D 参数状态。 */
 static k_bool g_osd_inited = K_FALSE;
@@ -24,9 +23,6 @@ static k_vb_blk_handle g_osd_block = VB_INVALID_HANDLE;
 static k_u64 g_osd_phys_addr;
 static void *g_osd_virt_addr;
 static k_venc_2d_osd_attr g_osd_attr;
-
-/* OSD 显隐状态锁。 */
-static rt_sem_t g_osd_lock = RT_NULL;
 
 /* 非 0 表示当前有一次自动隐藏等待执行。 */
 static k_u64 g_osd_hide_deadline_ms;
@@ -40,75 +36,17 @@ static k_u64 osd_now_ms(void)
     return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
 }
 
-static k_bool osd_lock_take(void)
+static k_s32 osd_set_alpha(k_u32 alpha)
 {
     k_s32 ret;
 
-    if (g_osd_lock == RT_NULL)
-        return K_TRUE;
-
-    ret = rt_sem_take(g_osd_lock, rt_tick_from_millisecond(OSD_LOCK_TIMEOUT_MS));
-    if (ret != RT_EOK) {
-        LOG("OSD lock take timeout ret=%d", ret);
-        return K_FALSE;
-    }
-
-    return K_TRUE;
-}
-
-static void osd_lock_release(void)
-{
-    if (g_osd_lock != RT_NULL)
-        rt_sem_release(g_osd_lock);
-}
-
-static k_s32 osd_set_alpha_locked(k_u32 alpha)
-{
-    k_s32 ret;
-
-    /* 只修改全局透明度，图片 buffer 本身不变。调用者需持有 g_osd_lock。 */
+    /* 只修改全局透明度，图片 buffer 本身不变。 */
     g_osd_attr.osd_alpha = alpha;
-    LOG("kd_mpi_venc_set_2d_osd_param start alpha=%u", alpha);
     ret = kd_mpi_venc_set_2d_osd_param(VENC_CHN, OSD_REGION_INDEX, &g_osd_attr);
     if (ret)
         LOG("kd_mpi_venc_set_2d_osd_param alpha=%u failed! ret=0x%x", alpha, ret);
-    LOG("kd_mpi_venc_set_2d_osd_param done alpha=%u ret=0x%x", alpha, ret);
 
     return ret;
-}
-
-static k_s32 osd_control_init(void)
-{
-    /* 创建 OSD 状态锁。自动隐藏由 AI 线程轮询，不再创建后台线程/timer。 */
-    g_osd_lock = rt_sem_create("osdlock", 1, RT_IPC_FLAG_FIFO);
-    if (g_osd_lock == RT_NULL) {
-        LOG("rt_sem_create(osdlock) failed!");
-        return -1;
-    }
-
-    return 0;
-}
-
-static void osd_control_deinit(void)
-{
-    LOG("OSD control delete lock start");
-    if (g_osd_lock != RT_NULL) {
-        rt_sem_delete(g_osd_lock);
-        g_osd_lock = RT_NULL;
-    }
-    LOG("OSD control delete lock done");
-
-    g_osd_hide_deadline_ms = 0;
-}
-
-void osd_control_stop(void)
-{
-    if (g_osd_lock == RT_NULL && g_osd_hide_deadline_ms == 0)
-        return;
-
-    LOG("OSD control deinit start");
-    osd_control_deinit();
-    LOG("OSD control deinit done");
 }
 
 static void osd_release_buffer(void)
@@ -227,16 +165,6 @@ k_s32 osd_init(void)
         return ret;
     }
 
-    /* 5. OSD 参数下发成功后初始化显隐状态锁。 */
-    ret = osd_control_init();
-    if (ret) {
-        kd_mpi_venc_detach_2d(VENC_CHN);
-        g_osd_2d_attached = K_FALSE;
-        osd_control_deinit();
-        osd_release_buffer();
-        return ret;
-    }
-
     g_osd_inited = K_TRUE;
     LOG("VENC 2D OSD init OK: %ux%u ARGB8888 at (%u,%u), phys=0x%llx",
         (k_u32)MOTION_DETECTED_OSD_WIDTH,
@@ -251,17 +179,9 @@ k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
 {
     k_s32 ret;
     k_u32 target_alpha = visible ? 255 : 0;
-    k_bool alpha_changed;
-
-    LOG("OSD set motion visible start visible=%u duration=%ums",
-        visible, duration_ms);
-
-    if (!osd_lock_take())
-        return -1;
 
     if (!g_osd_inited) {
         LOG("OSD motion visible=%u requested before osd_init", visible);
-        osd_lock_release();
         return -1;
     }
 
@@ -271,31 +191,17 @@ k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
      * 只续期自动隐藏 deadline，避免每次请求都调用 set_2d_osd_param()。
      */
     g_osd_hide_deadline_ms = 0;
-    alpha_changed = (g_osd_attr.osd_alpha != target_alpha);
-    if (alpha_changed) {
-        ret = osd_set_alpha_locked(target_alpha);
-        if (ret) {
-            osd_lock_release();
+    if (g_osd_attr.osd_alpha != target_alpha) {
+        ret = osd_set_alpha(target_alpha);
+        if (ret)
             return ret;
-        }
-    } else {
-        ret = 0;
     }
 
     if (visible && duration_ms > 0) {
         g_osd_hide_deadline_ms = osd_now_ms() + duration_ms;
     }
 
-    LOG("OSD motion visible=%u duration=%ums alpha=%u changed=%u",
-        visible,
-        duration_ms,
-        (k_u32)g_osd_attr.osd_alpha,
-        alpha_changed ? 1U : 0U);
-
-    osd_lock_release();
-    LOG("OSD set motion visible done visible=%u ret=0x%x", visible, ret);
-
-    return ret;
+    return 0;
 }
 
 k_s32 osd_poll_auto_hide(void)
@@ -310,20 +216,15 @@ k_s32 osd_poll_auto_hide(void)
     if (now_ms + OSD_HIDE_DEADLINE_GRACE_MS < g_osd_hide_deadline_ms)
         return 0;
 
-    if (!osd_lock_take())
-        return -1;
-
-    if (g_osd_inited && g_osd_hide_deadline_ms != 0 &&
-        now_ms + OSD_HIDE_DEADLINE_GRACE_MS >= g_osd_hide_deadline_ms) {
-        g_osd_hide_deadline_ms = 0;
+    g_osd_hide_deadline_ms = 0;
+    if (g_osd_inited) {
         if (g_osd_attr.osd_alpha != 0) {
-            ret = osd_set_alpha_locked(0);
+            ret = osd_set_alpha(0);
             if (!ret)
                 LOG("OSD auto hide alpha=0");
         }
     }
 
-    osd_lock_release();
     return ret;
 }
 
@@ -334,8 +235,7 @@ void osd_deinit(void)
     if (!g_osd_inited && !g_osd_2d_attached && g_osd_block == VB_INVALID_HANDLE)
         return;
 
-    /* 清掉 OSD 显隐状态，确保后续 detach/release 不再有自动隐藏 deadline。 */
-    osd_control_stop();
+    g_osd_hide_deadline_ms = 0;
 
     if (g_osd_2d_attached) {
         LOG("VENC 2D OSD detach start");

@@ -62,18 +62,8 @@ static void ai_motion_thread(void *arg)
         timeout_count = 0;
         frame_count++;
 
-/*
-typedef struct {
-    k_u32 event_id;
-    k_u64 detect_time_ms;
-    k_u32 motion_score;
-    k_u32 osd_duration_ms;
-    k_u32 request_snapshot;
-} motion_event_msg;
-*/
         ret = motion_adapter_process(&frame, &event, &has_event);
         release_ret = ai_frame_release(ai_frame_handle);
-        ai_frame_handle = NULL;
         if (release_ret)
             LOG("ai_frame_release failed! ret=0x%x", release_ret);
 
@@ -82,10 +72,10 @@ typedef struct {
 
             LOG("Motion detected: event_id=%u score=%u duration=%ums",
                 event.event_id, event.motion_score, event.osd_duration_ms);
-            LOG("OSD motion request start event_id=%u", event.event_id);
             osd_ret = osd_set_motion_visible(1, event.osd_duration_ms);
-            LOG("OSD motion request done event_id=%u ret=0x%x",
-                event.event_id, osd_ret);
+            if (osd_ret)
+                LOG("osd_set_motion_visible failed! event_id=%u ret=0x%x",
+                    event.event_id, osd_ret);
         }
     }
 

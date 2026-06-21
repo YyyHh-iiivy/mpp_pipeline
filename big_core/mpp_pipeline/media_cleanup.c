@@ -42,9 +42,6 @@ void pipeline_cleanup(void)
 
     stream_thread_stop();
 
-    /* stream 已停止，不会再与 OSD 控制清理并发打印或抢占退出路径。 */
-    osd_control_stop();
-
     LOG("stream_export_deinit start");
     stream_export_deinit();
     LOG("stream_export_deinit done");

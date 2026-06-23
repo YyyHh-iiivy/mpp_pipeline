@@ -39,7 +39,7 @@ k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
     attr.rc_attr.cbr.src_frame_rate = SRC_FPS;    // VENC通道输入帧率参数，当前VICAP实际约30fps
     attr.rc_attr.cbr.dst_frame_rate = DST_FPS;    // VENC目标输出帧率参数；不负责配置VICAP硬件丢帧
     attr.rc_attr.cbr.bit_rate       = bitrate;    // 设置目标码率为指定值
-    attr.rc_attr.cbr.gop            = 30;        /* 每 30 个编码帧一个 I 帧；实际秒数取决于输出fps */
+    attr.rc_attr.cbr.gop            = VENC_GOP;  /* 跟随 DST_FPS，约 1 秒一个 I 帧 */
 
     ret = kd_mpi_venc_create_chn(chn, &attr);     // 创建VENC通道，使用指定的通道号和属性
     if (ret) {                                  // 检查通道创建是否成功

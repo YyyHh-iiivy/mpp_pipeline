@@ -34,6 +34,7 @@ static k_s32 vicap_set_channel_attr(k_vicap_chn chn,
     chn_attr.pix_format   = pix_format;
     chn_attr.buffer_num   = buffer_num;
     chn_attr.buffer_size  = buffer_size;
+    chn_attr.fps          = VICAP_OUTPUT_FPS;
 
     ret = kd_mpi_vicap_set_chn_attr(VICAP_DEV, chn, chn_attr);
     if (ret) {

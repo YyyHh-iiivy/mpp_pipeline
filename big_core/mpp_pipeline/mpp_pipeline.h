@@ -33,8 +33,9 @@
 #define ENC_HEIGHT   1080
 #define ENC_BITRATE  4000        /* kbps */
 #define SRC_FPS      30          /* VENC 通道输入帧率参数；当前 GC2093/VICAP 实际输入约 30fps */
-#define DST_FPS      30          /* VENC 目标输出帧率参数；与 SRC_FPS 一致 */
-// #define DST_FPS      15          /* VENC 目标输出帧率参数；不等同于 VICAP 硬件丢帧开关 */
+#define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
+#define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */
+#define VENC_GOP     DST_FPS     /* 约 1 秒一个 I 帧，避免 15fps 下 GOP30 拉长到 2 秒 */
 
 /* VB 池配置 */
 #define INPUT_BUF_CNT   6

@@ -31,6 +31,12 @@ require_pattern "$ipc_file" 'nalu_ipc_drop_current_stream' \
     "DATAFIFO backend must explicitly drop the current stream when congested"
 require_pattern "$ipc_file" 'nalu_ipc_log_stats' \
     "DATAFIFO backend must expose low-frequency pending/drop statistics"
+require_pattern "$ipc_file" 'seq_gap=' \
+    "DATAFIFO stats must expose seq_gap for big/small-core seq alignment"
+require_pattern "$ipc_file" 'read_done_age_ms=' \
+    "DATAFIFO stats must expose READ_DONE latency from submit_time_ms"
+require_pattern "$ipc_file" 'NALU IPC READ_DONE' \
+    "DATAFIFO release callback must log READ_DONE latency by seq"
 require_pattern "$venc_file" 'stream_export_get_pending_count' \
     "stream_thread stats must include DATAFIFO pending depth"
 require_pattern "$vb_file" '6\*4MB \+ 4\*1MB' \

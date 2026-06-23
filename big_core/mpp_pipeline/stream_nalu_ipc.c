@@ -13,6 +13,8 @@
 #define NALU_IPC_FIFO_ENTRIES NALU_IPC_PENDING_MAX
 #define NALU_IPC_STATS_INTERVAL 150ULL
 #define NALU_IPC_DROP_LOG_INTERVAL 30ULL
+#define NALU_IPC_READ_DONE_LOG_INTERVAL 150ULL
+#define NALU_IPC_READ_DONE_SLOW_MS 100ULL
 
 typedef struct {
     k_bool in_use;
@@ -33,6 +35,8 @@ static k_u64 g_write_fail_count;
 static k_u64 g_release_done_count;
 static k_u64 g_last_submitted_seq;
 static k_u64 g_last_submit_gap;
+static k_u64 g_last_read_done_seq;
+static k_u64 g_last_read_done_age_ms;
 /* Tracks streams that were handed to DATAFIFO but not yet READ_DONE by Linux. */
 static nalu_ipc_pending_item g_pending[NALU_IPC_PENDING_MAX];
 
@@ -58,16 +62,18 @@ static void nalu_ipc_log_stats(k_u64 seq, k_bool force)
         ((seq % NALU_IPC_STATS_INTERVAL) != 0))
         return;
 
-    LOG("NALU IPC stats: seq=%llu pending=%u ok=%llu drop_current=%llu datafifo_full=%llu pending_full=%llu write_fail=%llu release_done=%llu last_seq_gap=%llu",
+    LOG("NALU IPC stats: seq=%llu pending=%u seq_gap=%llu drop_current=%llu read_done_seq=%llu read_done_age_ms=%llu ok=%llu datafifo_full=%llu pending_full=%llu write_fail=%llu release_done=%llu",
         (unsigned long long)seq,
         g_pending_count,
-        (unsigned long long)g_submit_ok_count,
+        (unsigned long long)g_last_submit_gap,
         (unsigned long long)g_drop_current_count,
+        (unsigned long long)g_last_read_done_seq,
+        (unsigned long long)g_last_read_done_age_ms,
+        (unsigned long long)g_submit_ok_count,
         (unsigned long long)g_datafifo_full_count,
         (unsigned long long)g_pending_full_count,
         (unsigned long long)g_write_fail_count,
-        (unsigned long long)g_release_done_count,
-        (unsigned long long)g_last_submit_gap);
+        (unsigned long long)g_release_done_count);
 }
 
 static k_s32 nalu_ipc_drop_current_stream(k_u64 seq,
@@ -149,16 +155,33 @@ static void nalu_ipc_release_callback(void *datafifo_item)
 {
     mpp_nalu_ipc_msg *msg = (mpp_nalu_ipc_msg *)datafifo_item;
     nalu_ipc_pending_item *pending = nalu_ipc_find_pending(msg);
+    k_u64 read_done_age_ms;
+    k_u64 read_done_count;
+    k_u64 read_done_seq;
 
     if (!pending) {
         LOG("NALU IPC release callback: unknown stream msg=%p", datafifo_item);
         return;
     }
 
+    read_done_seq = pending->ipc_msg.seq;
+    read_done_age_ms = nalu_ipc_now_ms() - pending->ipc_msg.submit_time_ms;
     nalu_ipc_release_msg_stream(&pending->ipc_msg);
     if (g_pending_count > 0)
         g_pending_count--;
     g_release_done_count++;
+    g_last_read_done_seq = read_done_seq;
+    g_last_read_done_age_ms = read_done_age_ms;
+    read_done_count = g_release_done_count;
+    if (read_done_count == 1 ||
+        ((read_done_count % NALU_IPC_READ_DONE_LOG_INTERVAL) == 0) ||
+        read_done_age_ms >= NALU_IPC_READ_DONE_SLOW_MS) {
+        LOG("NALU IPC READ_DONE: seq=%llu read_done_age_ms=%llu pending=%u release_done=%llu",
+            (unsigned long long)read_done_seq,
+            (unsigned long long)read_done_age_ms,
+            g_pending_count,
+            (unsigned long long)read_done_count);
+    }
     memset(pending, 0, sizeof(*pending));
 }
 
@@ -180,6 +203,8 @@ k_s32 nalu_ipc_init(void)
     g_release_done_count = 0;
     g_last_submitted_seq = 0;
     g_last_submit_gap = 0;
+    g_last_read_done_seq = 0;
+    g_last_read_done_age_ms = 0;
     g_nalu_fifo_phy_addr = 0;
 
     ret = kd_datafifo_open(&g_nalu_fifo, &g_nalu_fifo_params);

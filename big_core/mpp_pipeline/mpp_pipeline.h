@@ -39,7 +39,7 @@
 
 /* VB 池配置 */
 #define INPUT_BUF_CNT   6
-#define OUTPUT_BUF_CNT  15
+#define OUTPUT_BUF_CNT  4
 #define AI_BUF_CNT      6
 
 /* 对齐宏 */
@@ -134,6 +134,7 @@ k_s32 stream_export_init(stream_export_mode mode);
 k_s32 stream_export_submit_venc_stream(k_u32 chn,
                                        const k_venc_stream *stream,
                                        k_bool *release_by_caller);
+k_u32 stream_export_get_pending_count(void);
 k_s32 stream_export_flush(void);
 void stream_export_deinit(void);
 

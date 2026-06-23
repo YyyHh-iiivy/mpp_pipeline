@@ -4,6 +4,7 @@
 k_s32 nalu_ipc_init(void);
 k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream);
 k_s32 nalu_ipc_flush(void);
+k_u32 nalu_ipc_get_pending_count(void);
 void nalu_ipc_deinit(void);
 
 static stream_export_mode g_stream_export_mode = STREAM_EXPORT_LOCAL_LOG;
@@ -98,6 +99,17 @@ k_s32 stream_export_flush(void)
 
     if (g_stream_export_mode == STREAM_EXPORT_DATAFIFO)
         return nalu_ipc_flush();
+
+    return 0;
+}
+
+k_u32 stream_export_get_pending_count(void)
+{
+    if (!g_stream_export_inited)
+        return 0;
+
+    if (g_stream_export_mode == STREAM_EXPORT_DATAFIFO)
+        return nalu_ipc_get_pending_count();
 
     return 0;
 }

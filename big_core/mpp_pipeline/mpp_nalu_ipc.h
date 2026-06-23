@@ -22,6 +22,7 @@ typedef struct {
     k_u32 pack_cnt;
     k_u64 seq;
     k_u64 frame_pts;
+    k_u64 submit_time_ms;
     k_u32 total_len;
     k_u32 reserved;
     mpp_nalu_ipc_pack packs[MPP_NALU_IPC_MAX_PACKS];

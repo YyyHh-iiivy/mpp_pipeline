@@ -182,8 +182,9 @@ void stream_thread(void *arg)
             time_t now = time(NULL);            // 获取当前时间
             double elapsed = difftime(now, last_log);  // 计算时间间隔
             double fps = (elapsed > 0) ? interval_frames / elapsed : 0;  // 计算帧率
-            LOG("=== Stats: %u frames in %.1fs, %.1f fps, total %u bytes ===",
-                interval_frames, elapsed, fps, total_bytes);  // 输出统计信息
+            LOG("=== Stats: %u frames in %.1fs, %.1f fps, total %u bytes, pending=%u ===",
+                interval_frames, elapsed, fps, total_bytes,
+                stream_export_get_pending_count());  // 输出统计信息
             interval_frames = 0;                // 重置区间帧计数器
             last_log = now;                     // 更新上次日志时间
         }

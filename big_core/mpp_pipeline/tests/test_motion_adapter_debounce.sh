@@ -114,6 +114,7 @@ int main(void)
     EXPECT_TRUE(event.event_id == 1, "first event id should be 1");
     EXPECT_TRUE(event.motion_score == 42, "event should carry detector score");
     EXPECT_TRUE(event.osd_duration_ms == 1000, "event should keep 1000ms OSD duration");
+    EXPECT_TRUE(event.request_snapshot == 1, "motion event should request snapshot");
 
     run_one(&frame, K_FALSE, "latched motion should not trigger event 1");
     run_one(&frame, K_FALSE, "latched motion should not trigger event 2");

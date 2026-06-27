@@ -71,11 +71,11 @@ int main(void)
     ret = vicap_start();
     if (ret) goto cleanup;
 
-    ret = ai_motion_thread_start();
-    if (ret) goto cleanup;
-
     ret = stream_export_init(STREAM_EXPORT_DATAFIFO);
     // ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
+    if (ret) goto cleanup;
+
+    ret = ai_motion_thread_start();
     if (ret) goto cleanup;
 
     g_status = STATUS_RUNNING;

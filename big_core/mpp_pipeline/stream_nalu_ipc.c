@@ -246,7 +246,8 @@ static void nalu_ipc_build_msg(mpp_nalu_ipc_msg *msg,
                                k_u32 chn,
                                const k_venc_stream *stream,
                                k_u64 seq,
-                               k_u64 submit_time_ms)
+                               k_u64 submit_time_ms,
+                               k_u32 flags)
 {
     memset(msg, 0, sizeof(*msg));
 
@@ -256,6 +257,7 @@ static void nalu_ipc_build_msg(mpp_nalu_ipc_msg *msg,
     msg->pack_cnt = stream->pack_cnt;
     msg->seq = seq;
     msg->submit_time_ms = submit_time_ms;
+    msg->reserved = flags;
     if (stream->pack_cnt > 0)
         msg->frame_pts = stream->pack[0].pts;
 
@@ -268,7 +270,9 @@ static void nalu_ipc_build_msg(mpp_nalu_ipc_msg *msg,
     }
 }
 
-k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
+k_s32 nalu_ipc_submit_stream(k_u32 chn,
+                             const k_venc_stream *stream,
+                             k_u32 flags)
 {
     k_s32 ret;
     k_u32 avail_write_len = 0;
@@ -320,7 +324,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
         return nalu_ipc_drop_current_stream(seq, "pending_full", avail_write_len);
     }
 
-    nalu_ipc_build_msg(&pending->ipc_msg, chn, stream, seq, submit_time_ms);
+    nalu_ipc_build_msg(&pending->ipc_msg, chn, stream, seq, submit_time_ms, flags);
     pending->in_use = K_TRUE;
     g_pending_count++;
 
@@ -351,6 +355,12 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn, const k_venc_stream *stream)
     g_last_submit_gap = g_last_submitted_seq ?
                         (seq - g_last_submitted_seq) : 0;
     g_last_submitted_seq = seq;
+    if (pending->ipc_msg.reserved & MPP_NALU_IPC_FLAG_SNAPSHOT) {
+        LOG("[big] snapshot flag set seq=%llu pts=%llu reserved=0x%x",
+            (unsigned long long)pending->ipc_msg.seq,
+            (unsigned long long)pending->ipc_msg.frame_pts,
+            pending->ipc_msg.reserved);
+    }
     nalu_ipc_log_stats(seq, K_FALSE);
 
     return 0;

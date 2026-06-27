@@ -131,6 +131,7 @@ void stream_thread_stop(void);
 void pipeline_cleanup(void);
 
 k_s32 stream_export_init(stream_export_mode mode);
+k_s32 stream_export_request_snapshot(const snapshot_request_msg *request);
 k_s32 stream_export_submit_venc_stream(k_u32 chn,
                                        const k_venc_stream *stream,
                                        k_bool *release_by_caller);

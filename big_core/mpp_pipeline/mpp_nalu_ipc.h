@@ -8,6 +8,8 @@
 #define MPP_NALU_IPC_MAX_PACKS  8U
 #define MPP_NALU_IPC_ITEM_SIZE  512U
 
+#define MPP_NALU_IPC_FLAG_SNAPSHOT  (1U << 0)
+
 typedef struct {
     k_u64 phys_addr;
     k_u64 pts;

@@ -32,7 +32,7 @@ static k_bool wait_ai_motion_thread_exit(k_u32 timeout_ms)
  * 1. ai_frame_try_get() dumps and maps one AI-channel Y plane.
  * 2. motion_adapter_process() runs detection and builds a motion event.
  * 3. ai_frame_release() always returns the dump frame and mmap mapping.
- * 4. osd_set_motion_visible() is called only after the frame is released.
+ * 4. OSD and snapshot requests are issued only after the frame is released.
  */
 static void ai_motion_thread(void *arg)
 {
@@ -69,6 +69,7 @@ static void ai_motion_thread(void *arg)
 
         if (!ret && !release_ret && has_event && g_ai_motion_running && g_running) {
             k_s32 osd_ret;
+            snapshot_request_msg snapshot_req;
 
             LOG("Motion detected: event_id=%u score=%u duration=%ums",
                 event.event_id, event.motion_score, event.osd_duration_ms);
@@ -76,6 +77,22 @@ static void ai_motion_thread(void *arg)
             if (osd_ret)
                 LOG("osd_set_motion_visible failed! event_id=%u ret=0x%x",
                     event.event_id, osd_ret);
+
+            if (event.request_snapshot) {
+                memset(&snapshot_req, 0, sizeof(snapshot_req));
+                snapshot_req.event_id = event.event_id;
+                snapshot_req.frame_time_ms = event.detect_time_ms;
+                snapshot_req.source_chn = VENC_CHN;
+                snprintf(snapshot_req.path_hint,
+                         sizeof(snapshot_req.path_hint),
+                         "motion-event-%u",
+                         event.event_id);
+
+                ret = stream_export_request_snapshot(&snapshot_req);
+                if (ret)
+                    LOG("stream_export_request_snapshot failed! event_id=%u ret=0x%x",
+                        event.event_id, ret);
+            }
         }
     }
 

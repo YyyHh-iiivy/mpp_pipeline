@@ -87,7 +87,7 @@ k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
     event->detect_time_ms = now;
     event->motion_score = result.motion_score;
     event->osd_duration_ms = MOTION_OSD_DURATION_MS;
-    event->request_snapshot = 0;
+    event->request_snapshot = 1;
     *has_event = K_TRUE;
     g_motion_latched = K_TRUE;
     g_last_motion_event_ms = event->detect_time_ms;

@@ -36,6 +36,16 @@ require_pattern "$ipc_file" 'nalu_ipc_drop_current_stream' \
     "DATAFIFO backend must explicitly drop the current stream when congested"
 require_pattern "$ipc_file" 'nalu_ipc_log_stats' \
     "DATAFIFO backend must expose low-frequency pending/drop statistics"
+require_pattern "$ipc_file" 'nalu_ipc_drain_releases' \
+    "DATAFIFO backend must actively drain reader READ_DONE notifications"
+require_pattern "$ipc_file" 'NALU_IPC_DRAIN_MAX_PASSES' \
+    "DATAFIFO drain must have a bounded retry cap"
+require_pattern "$ipc_file" 'nalu_ipc_log_pending_slots' \
+    "DATAFIFO backend must log pending slot ages for stuck pending diagnosis"
+require_pattern "$ipc_file" 'pending_full_after_drain' \
+    "DATAFIFO pending_full path must retry release drain before dropping"
+require_pattern "$ipc_file" 'return[[:space:]]+nalu_ipc_drain_releases\(\)' \
+    "nalu_ipc_flush must reuse the bounded release drain helper"
 require_pattern "$ipc_file" 'seq_gap=' \
     "DATAFIFO stats must expose seq_gap for big/small-core seq alignment"
 require_pattern "$ipc_file" 'read_done_age_ms=' \

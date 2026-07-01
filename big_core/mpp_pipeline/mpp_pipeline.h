@@ -66,7 +66,7 @@
 #define AI_CHN_BUF_SIZE  ALIGN_UP(AI_WIDTH * AI_HEIGHT * 3 / 2, 0x1000)
 #endif
 
-/* 自动退出时间 (秒) */
+/* 自动退出时间 (秒): 当前已停用，保留宏便于恢复 10 分钟验收模式 */
 #define AUTO_EXIT_SEC   600
 
 /* VENC 码流线程配置 */

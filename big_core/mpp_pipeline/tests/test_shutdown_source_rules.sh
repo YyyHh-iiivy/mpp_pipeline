@@ -16,6 +16,22 @@ if grep -Eq 'RT_WAITING_FOREVER' \
     exit 1
 fi
 
+enabled_main=$(awk '
+    /^[[:space:]]*#if[[:space:]]+0([[:space:]]|$)/ { disabled = 1; next }
+    disabled && /^[[:space:]]*#else([[:space:]]|$)/ { disabled = 0; in_if0_else = 1; next }
+    disabled && /^[[:space:]]*#endif([[:space:]]|$)/ { disabled = 0; next }
+    in_if0_else && /^[[:space:]]*#endif([[:space:]]|$)/ { in_if0_else = 0; next }
+    !disabled { print }
+' "$root/big_core/mpp_pipeline/mpp_pipeline.c")
+if printf '%s\n' "$enabled_main" | grep -Eq 'AUTO_EXIT_SEC|Auto-exit timeout reached|difftime\(time\(NULL\), start\)'; then
+    echo "main loop must not enable AUTO_EXIT_SEC auto-exit"
+    exit 1
+fi
+if ! printf '%s\n' "$enabled_main" | grep -Eq 'while[[:space:]]*\([[:space:]]*g_running[[:space:]]*\)'; then
+    echo "main loop must keep running until g_running is cleared"
+    exit 1
+fi
+
 stream_thread_body=$(sed -n '/void stream_thread/,/^}/p' "$root/big_core/mpp_pipeline/media_venc.c")
 if ! printf '%s\n' "$stream_thread_body" | grep -q 'g_stream_running'; then
     echo "stream_thread must use g_stream_running as its local run flag"

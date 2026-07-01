@@ -116,18 +116,27 @@ int main(void)
 
     LOG("Pipeline running");
 
-    /* 主循环: 等待退出信号或超时 */
+    /* 主循环: 等待退出信号 */
     {
+#if 0
+        /* 自动退出模式已停用：保留原 10 分钟验收逻辑，后续需要时可恢复。 */
         time_t start = time(NULL);
         while (g_running && difftime(time(NULL), start) < AUTO_EXIT_SEC) {
             rt_thread_mdelay(1000);
         }
+#else
+        while (g_running) {
+            rt_thread_mdelay(1000);
+        }
+#endif
         if (!g_running && g_stop_signal)
             LOG("Received signal %d, stopping...", (int)g_stop_signal);
+#if 0
         if (g_running) {
             LOG("Auto-exit timeout reached");
             g_running = 0;
         }
+#endif
     }
 
 cleanup:

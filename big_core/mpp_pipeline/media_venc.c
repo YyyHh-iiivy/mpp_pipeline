@@ -128,7 +128,7 @@ void stream_thread(void *arg)
         if (output.pack_cnt > VENC_MAX_PACKS)
             output.pack_cnt = VENC_MAX_PACKS;
 
-        /* 有限等待编码完成，保证 Ctrl+C 和自动退出能回收线程 */
+        /* 有限等待编码完成，保证信号退出和 cleanup 能回收线程 */
         ret = kd_mpi_venc_get_stream(chn, &output, VENC_GET_STREAM_TIMEOUT_MS);
         if (ret) {                              // 检查获取码流是否成功
             if (!g_stream_running)               // 如果 cleanup 要求退出

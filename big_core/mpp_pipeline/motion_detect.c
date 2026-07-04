@@ -4,11 +4,12 @@
 #include "motion_detect.h"
 
 /* 单个灰度采样点的亮度差超过该阈值，才认为该采样点发生变化。 */
-#define MOTION_PIXEL_DIFF_THRESHOLD 25U
+#define MOTION_PIXEL_DIFF_THRESHOLD 10U
 /* motion_score 使用千分比表示，15 约等于 1.5% 的采样点发生变化。 */
-#define MOTION_TRIGGER_SCORE        15U
+#define MOTION_TRIGGER_SCORE        8U
 /* 每隔 4 个像素采样一次，降低运动检测线程的 CPU 开销。 */
 #define MOTION_SAMPLE_STEP          4U
+
 
 /* 保存上一帧的 Y 分量，按 width * height 紧密排列，不保留 stride 填充区。 */
 static k_u8 *g_prev_frame;

@@ -47,12 +47,12 @@
 #if VENC_FORCE_IDR_ENABLE
 #define VENC_GOP     DST_FPS     /* force IDR 可用时保持约 1 秒 GOP */
 #else
-#define VENC_GOP     8           /* force IDR 不可用时缩短最大等待时间 */
+#define VENC_GOP     4           /* force IDR 不可用时缩短最大等待时间 */
 #endif
 
 /* VB 池配置 */
-#define INPUT_BUF_CNT   6
-#define OUTPUT_BUF_CNT  4
+#define INPUT_BUF_CNT   3
+#define OUTPUT_BUF_CNT  2
 #define AI_BUF_CNT      6
 
 /* 对齐宏 */

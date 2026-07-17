@@ -10,6 +10,7 @@
 /* 每隔 4 个像素采样一次，降低运动检测线程的 CPU 开销。 */
 #define MOTION_SAMPLE_STEP          4U
 
+
 /* 保存上一帧的 Y 分量，按 width * height 紧密排列，不保留 stride 填充区。 */
 static k_u8 *g_prev_frame;
 static k_u32 g_prev_width;

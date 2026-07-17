@@ -35,7 +35,20 @@
 #define SRC_FPS      30          /* VENC 通道输入帧率参数；当前 GC2093/VICAP 实际输入约 30fps */
 #define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
 #define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */
-#define VENC_GOP     DST_FPS     /* 约 1 秒一个 I 帧，避免 15fps 下 GOP30 拉长到 2 秒 */
+
+#ifndef VENC_FORCE_IDR_ENABLE
+#define VENC_FORCE_IDR_ENABLE 0
+#endif
+
+#ifndef VENC_FORCE_IDR_USE_MAPI
+#define VENC_FORCE_IDR_USE_MAPI 0
+#endif
+
+#if VENC_FORCE_IDR_ENABLE
+#define VENC_GOP     DST_FPS     /* force IDR 可用时保持约 1 秒 GOP */
+#else
+#define VENC_GOP     8           /* force IDR 不可用时缩短最大等待时间 */
+#endif
 
 /* VB 池配置 */
 #define INPUT_BUF_CNT   6
@@ -122,6 +135,7 @@ extern rt_sem_t g_stream_exit_sem;
 k_s32 vb_init(void);
 k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate);
 k_s32 venc_start_chn(k_u32 chn);
+k_s32 venc_request_idr_once(k_u32 chn, const char *reason);
 k_s32 vicap_try_config(k_vicap_sensor_type sensor_type);
 k_s32 vicap_config(k_vicap_sensor_type sensor_type);
 k_s32 vi_bind_venc(void);
@@ -135,6 +149,7 @@ k_s32 stream_export_request_snapshot(const snapshot_request_msg *request);
 k_s32 stream_export_submit_venc_stream(k_u32 chn,
                                        const k_venc_stream *stream,
                                        k_bool *release_by_caller);
+void ctrl_ipc_poll(void);
 k_u32 stream_export_get_pending_count(void);
 k_s32 stream_export_flush(void);
 void stream_export_deinit(void);

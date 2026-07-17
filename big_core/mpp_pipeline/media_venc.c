@@ -1,5 +1,42 @@
 #include "mpp_pipeline.h"
 
+static k_u64 venc_now_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
+}
+
+k_s32 venc_request_idr_once(k_u32 chn, const char *reason)
+{
+#if VENC_FORCE_IDR_ENABLE
+    k_s32 ret;
+
+#if VENC_FORCE_IDR_USE_MAPI
+    ret = kd_mapi_venc_request_idr((k_s32)chn);
+#else
+    ret = kd_mpi_venc_request_idr(chn);
+#endif
+    LOG("VENC request IDR chn=%u reason=%s ret=0x%x",
+        chn,
+        reason ? reason : "manual",
+        ret);
+    return ret;
+#else
+    static k_u32 log_count;
+
+    log_count++;
+    if (log_count == 1U || (log_count % 30U) == 0U) {
+        LOG("VENC request IDR skipped chn=%u reason=%s: VENC_FORCE_IDR_ENABLE=0, GOP fallback=%u",
+            chn,
+            reason ? reason : "manual",
+            VENC_GOP);
+    }
+    return -1;
+#endif
+}
+
 /* ================================================================
  * Step 2: VENC 编码通道配置
  *
@@ -11,7 +48,7 @@
 /**
  * @brief 创建VENC（视频编码）通道
  *
- * 该函数只负责创建H.265编码通道并配置CBR码率控制模式。
+ * 该函数只负责创建H.265编码通道，配置为CBR码率控制模式。
  * src_frame_rate/dst_frame_rate 按官方定义分别表示VENC通道输入帧率和目标帧率，
  * 但它们不是VICAP侧的硬件丢帧配置。
  *
@@ -49,7 +86,6 @@ k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
     g_status = STATUS_VENC_CREATED;             // 更新全局状态为VENC已创建
 
     LOG("VENC chn=%u create OK", chn);         // 记录创建成功的日志
-
     return 0;                                   // 返回成功状态
 }
 

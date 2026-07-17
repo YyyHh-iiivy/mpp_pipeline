@@ -10,6 +10,12 @@
 
 #define MPP_NALU_IPC_FLAG_SNAPSHOT  (1U << 0)
 
+#define MPP_CTRL_IPC_MAGIC       0x49445251U  /* "IDRQ" */
+#define MPP_CTRL_IPC_VERSION     1U
+#define MPP_CTRL_IPC_ITEM_SIZE   64U
+#define MPP_CTRL_IPC_ENTRIES     4U
+#define MPP_CTRL_CMD_REQUEST_IDR 1U
+
 typedef struct {
     k_u64 phys_addr;
     k_u64 pts;
@@ -32,6 +38,20 @@ typedef struct {
 
 typedef char mpp_nalu_ipc_msg_must_fit_item[
     (sizeof(mpp_nalu_ipc_msg) <= MPP_NALU_IPC_ITEM_SIZE) ? 1 : -1
+];
+
+typedef struct {
+    k_u32 magic;
+    k_u32 version;
+    k_u32 cmd;
+    k_u32 reserved;
+    k_u64 seq;
+    k_u64 session_generation;
+    k_u64 request_time_ms;
+} mpp_ctrl_ipc_msg;
+
+typedef char mpp_ctrl_ipc_msg_must_fit_item[
+    (sizeof(mpp_ctrl_ipc_msg) <= MPP_CTRL_IPC_ITEM_SIZE) ? 1 : -1
 ];
 
 #endif /* MPP_NALU_IPC_H */

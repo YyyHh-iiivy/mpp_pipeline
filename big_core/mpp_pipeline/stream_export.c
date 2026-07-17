@@ -145,6 +145,7 @@ k_s32 stream_export_init(stream_export_mode mode)
             g_stream_export_inited = K_FALSE;
             return ret;
         }
+        (void)venc_request_idr_once(VENC_CHN, "stream_export_init");
     }
 
     LOG("Stream export mode: %s", stream_export_mode_name(mode));
@@ -185,6 +186,7 @@ k_s32 stream_export_submit_venc_stream(k_u32 chn,
     if (!g_stream_export_inited)
         return -1;
 
+    ctrl_ipc_poll();
     snapshot_flags = stream_export_select_snapshot_flags(stream);
 
     if (g_stream_export_mode == STREAM_EXPORT_DATAFIFO) {

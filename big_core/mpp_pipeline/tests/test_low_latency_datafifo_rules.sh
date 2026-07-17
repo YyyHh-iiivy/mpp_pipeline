@@ -74,6 +74,10 @@ require_pattern "$export_file" 'Snapshot mock IPC event' \
     "local-log export mode must emit a mock snapshot IPC event"
 require_pattern "$motion_thread_file" 'stream_export_request_snapshot' \
     "AI motion thread must request a snapshot after a motion event"
+require_pattern "$venc_file" 'ret[[:space:]]*=[[:space:]]*kd_mpi_venc_enable_idr\(chn,[[:space:]]*K_TRUE\)' \
+    "VENC channel creation must enable runtime IDR requests"
+require_pattern "$venc_file" 'kd_mpi_venc_enable_idr failed' \
+    "VENC IDR enable failure must be checked and logged"
 require_pattern "$venc_file" 'stream_export_get_pending_count' \
     "stream_thread stats must include DATAFIFO pending depth"
 require_pattern "$vb_file" '6\*4MB \+ 4\*1MB' \
@@ -92,6 +96,25 @@ pipeline_order=$(awk '
 ' "$pipeline_file")
 if [ "$pipeline_order" != "ok" ]; then
     echo "stream_export_init must run before ai_motion_thread_start"
+    exit 1
+fi
+
+venc_idr_enable_order=$(awk '
+    /kd_mpi_venc_create_chn\(chn,[[:space:]]*&attr\)/ { create_line = NR }
+    /g_status[[:space:]]*=[[:space:]]*STATUS_VENC_CREATED/ { created_state_line = NR }
+    /kd_mpi_venc_enable_idr\(chn,[[:space:]]*K_TRUE\)/ { enable_line = NR }
+    /kd_mpi_venc_start_chn\(chn\)/ { start_line = NR }
+    END {
+        if (create_line > 0 && created_state_line > create_line &&
+            enable_line > created_state_line && start_line > enable_line) {
+            print "ok";
+        } else {
+            print "bad";
+        }
+    }
+' "$venc_file")
+if [ "$venc_idr_enable_order" != "ok" ]; then
+    echo "VENC IDR must be enabled after create/cleanup-state setup and before channel start"
     exit 1
 fi
 

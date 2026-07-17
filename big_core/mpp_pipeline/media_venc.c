@@ -11,7 +11,7 @@
 /**
  * @brief 创建VENC（视频编码）通道
  *
- * 该函数只负责创建H.265编码通道，配置为CBR码率控制模式。
+ * 该函数负责创建H.265编码通道、配置CBR码率控制模式并启用主动IDR请求。
  * src_frame_rate/dst_frame_rate 按官方定义分别表示VENC通道输入帧率和目标帧率，
  * 但它们不是VICAP侧的硬件丢帧配置。
  *
@@ -49,6 +49,14 @@ k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
     g_status = STATUS_VENC_CREATED;             // 更新全局状态为VENC已创建
 
     LOG("VENC chn=%u create OK", chn);         // 记录创建成功的日志
+
+    ret = kd_mpi_venc_enable_idr(chn, K_TRUE);  // 允许运行期主动请求IDR帧
+    if (ret) {
+        LOG("kd_mpi_venc_enable_idr failed! chn=%u ret=0x%x", chn, ret);
+        return ret;
+    }
+
+    LOG("VENC chn=%u IDR enable OK", chn);
     return 0;                                   // 返回成功状态
 }
 

@@ -21,6 +21,7 @@
 #include "k_venc_comm.h"
 #include "mpp_types.h"
 #include "motion_detect.h"
+#include "stream_freshness.h"
 
 /* GC2093 传感器 (开发板标注 TYS-2093-V31)
  * SDK 示例和多数 K230 板卡把 GC2093 接在 CSI2；CSI0 配置会在 kd_mpi_vicap_init()
@@ -47,12 +48,12 @@
 #if VENC_FORCE_IDR_ENABLE
 #define VENC_GOP     DST_FPS     /* force IDR 可用时保持约 1 秒 GOP */
 #else
-#define VENC_GOP     4           /* force IDR 不可用时缩短最大等待时间 */
+#define VENC_GOP     8           /* 自然关键帧间隔约 533ms，兼顾拉流等待和码率突发 */
 #endif
 
 /* VB 池配置 */
 #define INPUT_BUF_CNT   3
-#define OUTPUT_BUF_CNT  2
+#define OUTPUT_BUF_CNT  3
 #define AI_BUF_CNT      6
 
 /* 对齐宏 */

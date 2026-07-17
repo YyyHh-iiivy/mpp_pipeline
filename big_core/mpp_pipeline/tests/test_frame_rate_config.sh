@@ -23,8 +23,10 @@ require_pattern "$header" '^[[:space:]]*#define[[:space:]]+DST_FPS[[:space:]]+15
     "DST_FPS must be 15fps for the low-latency RTSP profile"
 require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VICAP_OUTPUT_FPS[[:space:]]+15([[:space:]]|$)' \
     "VICAP_OUTPUT_FPS must request 15fps VICAP channel output"
-require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VENC_GOP[[:space:]]+DST_FPS([[:space:]]|$)' \
-    "VENC_GOP must track DST_FPS so the IDR interval stays near one second"
+require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VENC_FORCE_IDR_ENABLE[[:space:]]+0([[:space:]]|$)' \
+    "runtime forced IDR must remain disabled by default"
+require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VENC_GOP[[:space:]]+8([[:space:]]|$)' \
+    "natural VENC_GOP fallback must remain 8 for the measured low-latency profile"
 
 require_pattern "$vicap_file" 'chn_attr\.fps[[:space:]]*=[[:space:]]*VICAP_OUTPUT_FPS;' \
     "VICAP channel attr must apply VICAP_OUTPUT_FPS"

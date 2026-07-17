@@ -8,6 +8,19 @@ static k_u64 venc_now_ms(void)
     return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
 }
 
+static k_u64 venc_stream_video_pts(const k_venc_stream *stream)
+{
+    if (!stream || !stream->pack)
+        return 0;
+
+    for (k_u32 i = 0; i < stream->pack_cnt; i++) {
+        if (stream->pack[i].type != K_VENC_HEADER && stream->pack[i].pts != 0)
+            return stream->pack[i].pts;
+    }
+
+    return 0;
+}
+
 k_s32 venc_request_idr_once(k_u32 chn, const char *reason)
 {
 #if VENC_FORCE_IDR_ENABLE
@@ -86,6 +99,15 @@ k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
     g_status = STATUS_VENC_CREATED;             // 更新全局状态为VENC已创建
 
     LOG("VENC chn=%u create OK", chn);         // 记录创建成功的日志
+    LOG("Low-latency VENC config: src_fps=%u dst_fps=%u vicap_fps=%u gop=%u input_buf=%u output_buf=%u drift_drop_ms=%lld drift_clear_ms=%lld",
+        SRC_FPS,
+        DST_FPS,
+        VICAP_OUTPUT_FPS,
+        VENC_GOP,
+        INPUT_BUF_CNT,
+        OUTPUT_BUF_CNT,
+        (long long)STREAM_FRESHNESS_DROP_THRESHOLD_MS,
+        (long long)STREAM_FRESHNESS_CLEAR_THRESHOLD_MS);
     return 0;                                   // 返回成功状态
 }
 
@@ -134,11 +156,14 @@ void stream_thread(void *arg)
     k_u32 interval_frames = 0;                  // 区间帧计数器，用于计算区间内的帧率
     k_u32 query_fail_count = 0;                 // 查询失败计数，用于限制日志频率
     k_u32 get_fail_count = 0;                   // get_stream失败计数，用于限制日志频率
+    k_s64 source_drift_ms = 0;
+    stream_freshness_tracker freshness;
 
     LOG("Stream thread started");               // 记录线程启动日志
     start_time = last_log = time(NULL);         // 记录开始时间和上次日志时间
     memset(&output, 0, sizeof(output));
     output.pack = packs;
+    stream_freshness_init(&freshness);
 
     while (g_stream_running) {                  // cleanup 明确停止前持续 drain VENC
         k_venc_chn_status status;               // VENC通道状态结构体
@@ -188,6 +213,35 @@ void stream_thread(void *arg)
             break;
         }
 
+        {
+            k_u64 video_pts = venc_stream_video_pts(&output);
+            k_bool stale_drop = K_FALSE;
+
+            ret = stream_freshness_observe(&freshness,
+                                           video_pts,
+                                           venc_now_ms(),
+                                           &source_drift_ms,
+                                           &stale_drop);
+            if (ret) {
+                LOG("stream_freshness_observe failed! ret=0x%x", ret);
+            } else if (stale_drop) {
+                ret = kd_mpi_venc_release_stream(chn, &output);
+                if (ret) {
+                    LOG("kd_mpi_venc_release_stream stale_drop failed! ret=0x%x", ret);
+                }
+
+                if (freshness.stale_drop_count == 1 ||
+                    (freshness.stale_drop_count % 30ULL) == 0) {
+                    LOG("VENC stale_drop: count=%llu source_drift_ms=%lld max_drift_ms=%lld catch_up=%u",
+                        (unsigned long long)freshness.stale_drop_count,
+                        (long long)source_drift_ms,
+                        (long long)freshness.max_drift_ms,
+                        (unsigned int)freshness.catching_up);
+                }
+                continue;
+            }
+        }
+
         /* 遍历所有 pack, 只统计非 header 的数据帧 */
         for (k_u32 i = 0; i < output.pack_cnt; i++) {  // 遍历所有编码包
             if (output.pack[i].type != K_VENC_HEADER) {  // 检查是否为非头部帧（即实际数据帧）
@@ -219,9 +273,12 @@ void stream_thread(void *arg)
             time_t now = time(NULL);            // 获取当前时间
             double elapsed = difftime(now, last_log);  // 计算时间间隔
             double fps = (elapsed > 0) ? interval_frames / elapsed : 0;  // 计算帧率
-            LOG("=== Stats: %u frames in %.1fs, %.1f fps, total %u bytes, pending=%u ===",
+            LOG("=== Stats: %u frames in %.1fs, %.1f fps, total %u bytes, pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu ===",
                 interval_frames, elapsed, fps, total_bytes,
-                stream_export_get_pending_count());  // 输出统计信息
+                stream_export_get_pending_count(),
+                (long long)source_drift_ms,
+                (long long)freshness.max_drift_ms,
+                (unsigned long long)freshness.stale_drop_count);  // 输出统计信息
             interval_frames = 0;                // 重置区间帧计数器
             last_log = now;                     // 更新上次日志时间
         }

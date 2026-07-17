@@ -2,6 +2,8 @@
 set -eu
 
 root=${1:-.}
+top_sconscript="$root/big_core/SConscript"
+module_sconscript="$root/big_core/mpp_pipeline/SConscript"
 header="$root/big_core/mpp_pipeline/mpp_pipeline.h"
 ipc_header="$root/big_core/mpp_pipeline/mpp_nalu_ipc.h"
 ipc_file="$root/big_core/mpp_pipeline/stream_nalu_ipc.c"
@@ -33,12 +35,17 @@ reject_pattern() {
     fi
 }
 
-require_pattern "$header" '^[[:space:]]*#define[[:space:]]+OUTPUT_BUF_CNT[[:space:]]+4([[:space:]]|$)' \
-    "OUTPUT_BUF_CNT must be 4 for the low-latency RTSP profile"
-require_pattern "$ipc_file" '^[[:space:]]*#define[[:space:]]+NALU_IPC_PENDING_MAX[[:space:]]+3U?([[:space:]]|$)' \
-    "NALU_IPC_PENDING_MAX must cap outstanding DATAFIFO streams at 3"
-require_pattern "$ipc_file" '^[[:space:]]*#define[[:space:]]+NALU_IPC_FIFO_ENTRIES[[:space:]]+NALU_IPC_PENDING_MAX([[:space:]]|$)' \
-    "DATAFIFO entries must track the low-latency pending cap"
+require_pattern "$top_sconscript" "'mpp_pipeline/stream_freshness\.c'" \
+    "top-level SConscript must compile stream_freshness.c"
+require_pattern "$module_sconscript" "'stream_freshness\.c'" \
+    "module SConscript must list stream_freshness.c"
+
+require_pattern "$header" '^[[:space:]]*#define[[:space:]]+OUTPUT_BUF_CNT[[:space:]]+3([[:space:]]|$)' \
+    "OUTPUT_BUF_CNT must be 3 for the low-latency RTSP profile"
+require_pattern "$ipc_file" '^[[:space:]]*#define[[:space:]]+NALU_IPC_PENDING_MAX[[:space:]]+2U?([[:space:]]|$)' \
+    "NALU_IPC_PENDING_MAX must cap outstanding DATAFIFO streams at 2"
+require_pattern "$ipc_file" '^[[:space:]]*#define[[:space:]]+NALU_IPC_FIFO_ENTRIES[[:space:]]+3U?([[:space:]]|$)' \
+    "DATAFIFO entries must remain 3 for small-core ring compatibility"
 require_pattern "$ipc_header" 'submit_time_ms' \
     "mpp_nalu_ipc_msg must carry big-core submit_time_ms for latency tracing"
 require_pattern "$ipc_header" 'MPP_NALU_IPC_FLAG_SNAPSHOT[[:space:]]+\(1U[[:space:]]*<<[[:space:]]*0\)' \
@@ -61,6 +68,10 @@ require_pattern "$ipc_file" 'seq_gap=' \
     "DATAFIFO stats must expose seq_gap for big/small-core seq alignment"
 require_pattern "$ipc_file" 'read_done_age_ms=' \
     "DATAFIFO stats must expose READ_DONE latency from submit_time_ms"
+require_pattern "$ipc_file" 'pending_high_water=' \
+    "DATAFIFO stats must expose pending high-water depth"
+require_pattern "$ipc_file" 'Low-latency IPC config:' \
+    "DATAFIFO init must log the pending and FIFO configuration"
 require_pattern "$ipc_file" 'NALU IPC READ_DONE' \
     "DATAFIFO release callback must log READ_DONE latency by seq"
 require_pattern "$ipc_file" 'k_s32[[:space:]]+nalu_ipc_submit_stream\(k_u32 chn,' \
@@ -87,7 +98,11 @@ reject_pattern "$venc_file" 'kd_mpi_venc_enable_idr' \
     "VENC channel creation must not enable runtime IDR requests"
 require_pattern "$venc_file" 'stream_export_get_pending_count' \
     "stream_thread stats must include DATAFIFO pending depth"
-require_pattern "$vb_file" '6\*4MB \+ 4\*1MB' \
+require_pattern "$venc_file" 'stream_freshness_observe' \
+    "stream thread must evaluate source-frame freshness"
+require_pattern "$venc_file" 'stale_drop' \
+    "stream thread must report stale-frame drops"
+require_pattern "$vb_file" '3\*4MB \+ 3\*1MB' \
     "VB memory comment must document the reduced VENC stream pool size"
 
 pipeline_order=$(awk '

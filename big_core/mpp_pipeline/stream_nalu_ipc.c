@@ -9,12 +9,13 @@
 #include "k_datafifo.h"
 #include "mpp_nalu_ipc.h"
 
-#define NALU_IPC_PENDING_MAX  3U
-#define NALU_IPC_FIFO_ENTRIES NALU_IPC_PENDING_MAX
+#define NALU_IPC_PENDING_MAX  2U
+#define NALU_IPC_FIFO_ENTRIES 3U
 #define NALU_IPC_STATS_INTERVAL 150ULL
 #define NALU_IPC_DROP_LOG_INTERVAL 30ULL
 #define NALU_IPC_READ_DONE_LOG_INTERVAL 150ULL
 #define NALU_IPC_READ_DONE_SLOW_MS 100ULL
+#define NALU_IPC_DRAIN_MAX_PASSES 4U
 #define CTRL_IPC_POLL_MAX_PER_LOOP 4U
 
 typedef struct {
@@ -31,6 +32,7 @@ static k_u64 g_nalu_fifo_phy_addr;
 static k_u64 g_ctrl_fifo_phy_addr;
 static k_u64 g_next_nalu_msg_seq;
 static k_u32 g_pending_count;
+static k_u32 g_pending_high_water;
 static k_u64 g_submit_ok_count;
 static k_u64 g_drop_current_count;
 static k_u64 g_datafifo_full_count;
@@ -165,9 +167,10 @@ static void nalu_ipc_log_stats(k_u64 seq, k_bool force)
         ((seq % NALU_IPC_STATS_INTERVAL) != 0))
         return;
 
-    LOG("NALU IPC stats: seq=%llu pending=%u seq_gap=%llu drop_current=%llu read_done_seq=%llu read_done_age_ms=%llu ok=%llu datafifo_full=%llu pending_full=%llu write_fail=%llu release_done=%llu",
+    LOG("NALU IPC stats: seq=%llu pending=%u pending_high_water=%u seq_gap=%llu drop_current=%llu read_done_seq=%llu read_done_age_ms=%llu ok=%llu datafifo_full=%llu pending_full=%llu write_fail=%llu release_done=%llu",
         (unsigned long long)seq,
         g_pending_count,
+        g_pending_high_water,
         (unsigned long long)g_last_submit_gap,
         (unsigned long long)g_drop_current_count,
         (unsigned long long)g_last_read_done_seq,
@@ -232,6 +235,51 @@ static k_s32 nalu_ipc_drop_current_stream(k_u64 seq,
     }
 
     return -1;
+}
+
+static void nalu_ipc_log_pending_slots(const char *reason, k_u32 avail_write_len)
+{
+    k_u64 now_ms = nalu_ipc_now_ms();
+    k_bool any_pending = K_FALSE;
+
+    for (k_u32 i = 0; i < NALU_IPC_PENDING_MAX; i++) {
+        if (!g_pending[i].in_use)
+            continue;
+
+        any_pending = K_TRUE;
+        LOG("NALU IPC pending slot: reason=%s slot=%u seq=%llu chn=%u age_ms=%llu total_len=%u avail=%u",
+            reason ? reason : "unknown",
+            i,
+            (unsigned long long)g_pending[i].ipc_msg.seq,
+            g_pending[i].ipc_msg.chn,
+            (unsigned long long)(now_ms - g_pending[i].ipc_msg.submit_time_ms),
+            g_pending[i].ipc_msg.total_len,
+            avail_write_len);
+    }
+
+    if (!any_pending) {
+        LOG("NALU IPC pending slot: reason=%s none pending=%u avail=%u",
+            reason ? reason : "unknown", g_pending_count, avail_write_len);
+    }
+}
+
+static k_s32 nalu_ipc_drain_releases(void)
+{
+    k_s32 ret = 0;
+    k_u32 last_pending = g_pending_count;
+
+    for (k_u32 pass = 0; pass < NALU_IPC_DRAIN_MAX_PASSES; pass++) {
+        ret = kd_datafifo_write(g_nalu_fifo, NULL);
+        if (ret)
+            return ret;
+
+        if (g_pending_count == 0 || g_pending_count >= last_pending)
+            break;
+
+        last_pending = g_pending_count;
+    }
+
+    return ret;
 }
 
 static void nalu_ipc_msg_to_release_stream(const mpp_nalu_ipc_msg *msg,
@@ -337,6 +385,7 @@ k_s32 nalu_ipc_init(void)
     memset(g_pending, 0, sizeof(g_pending));
     g_next_nalu_msg_seq = 0;
     g_pending_count = 0;
+    g_pending_high_water = 0;
     g_submit_ok_count = 0;
     g_drop_current_count = 0;
     g_datafifo_full_count = 0;
@@ -382,6 +431,11 @@ k_s32 nalu_ipc_init(void)
     g_nalu_fifo_inited = K_TRUE;
     LOG("NALU IPC DATAFIFO init OK: phy_addr=0x%llx",
         (unsigned long long)g_nalu_fifo_phy_addr);
+    LOG("Low-latency IPC config: pending_max=%u fifo_entries=%u output_buf=%u drain_max_passes=%u",
+        NALU_IPC_PENDING_MAX,
+        NALU_IPC_FIFO_ENTRIES,
+        OUTPUT_BUF_CNT,
+        NALU_IPC_DRAIN_MAX_PASSES);
 
     (void)ctrl_ipc_init();
 
@@ -440,10 +494,10 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
     submit_time_ms = nalu_ipc_now_ms();
 
     /* A successful submit transfers release responsibility to this backend. */
-    /* Flush release notifications from the reader side before checking space. */
-    ret = kd_datafifo_write(g_nalu_fifo, NULL);
+    /* Drain release notifications from the reader side before checking space. */
+    ret = nalu_ipc_drain_releases();
     if (ret) {
-        LOG("kd_datafifo_write(NULL) failed! ret=0x%x", ret);
+        LOG("nalu_ipc_drain_releases failed! ret=0x%x", ret);
         g_write_fail_count++;
         (void)nalu_ipc_drop_current_stream(seq, "flush_failed", 0);
         return ret;
@@ -466,14 +520,33 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
 
     pending = nalu_ipc_alloc_pending();
     if (!pending) {
-        g_pending_full_count++;
-        return nalu_ipc_drop_current_stream(seq, "pending_full", avail_write_len);
+        nalu_ipc_log_pending_slots("pending_full_before_drain", avail_write_len);
+        ret = nalu_ipc_drain_releases();
+        if (ret) {
+            LOG("nalu_ipc_drain_releases on pending_full failed! ret=0x%x", ret);
+            g_write_fail_count++;
+            (void)nalu_ipc_drop_current_stream(seq,
+                                               "pending_full_drain_failed",
+                                               avail_write_len);
+            return ret;
+        }
+
+        pending = nalu_ipc_alloc_pending();
+        if (!pending) {
+            g_pending_full_count++;
+            nalu_ipc_log_pending_slots("pending_full_after_drain", avail_write_len);
+            return nalu_ipc_drop_current_stream(seq,
+                                                "pending_full_after_drain",
+                                                avail_write_len);
+        }
     }
 
     nalu_ipc_build_msg(&pending->ipc_msg, chn, stream, seq, submit_time_ms, flags);
     nalu_ipc_log_venc_timing(&pending->ipc_msg);
     pending->in_use = K_TRUE;
     g_pending_count++;
+    if (g_pending_count > g_pending_high_water)
+        g_pending_high_water = g_pending_count;
 
     ret = kd_datafifo_write(g_nalu_fifo, &pending->ipc_msg);
     if (ret) {
@@ -518,7 +591,7 @@ k_s32 nalu_ipc_flush(void)
     if (!g_nalu_fifo_inited || g_nalu_fifo == K_DATAFIFO_INVALID_HANDLE)
         return 0;
 
-    return kd_datafifo_write(g_nalu_fifo, NULL);
+    return nalu_ipc_drain_releases();
 }
 
 k_u32 nalu_ipc_get_pending_count(void)
@@ -533,12 +606,16 @@ k_u64 nalu_ipc_get_phy_addr(void)
 
 void nalu_ipc_deinit(void)
 {
+    k_s32 ret;
+
     ctrl_ipc_deinit();
 
     if (!g_nalu_fifo_inited || g_nalu_fifo == K_DATAFIFO_INVALID_HANDLE)
         return;
 
-    kd_datafifo_write(g_nalu_fifo, NULL);
+    ret = nalu_ipc_drain_releases();
+    if (ret)
+        LOG("nalu_ipc_drain_releases during deinit failed! ret=0x%x", ret);
 
     for (k_u32 i = 0; i < NALU_IPC_PENDING_MAX; i++) {
         if (g_pending[i].in_use) {
@@ -556,5 +633,6 @@ void nalu_ipc_deinit(void)
     g_nalu_fifo_phy_addr = 0;
     g_nalu_fifo_inited = K_FALSE;
     g_pending_count = 0;
+    g_pending_high_water = 0;
     LOG("NALU IPC DATAFIFO deinit");
 }

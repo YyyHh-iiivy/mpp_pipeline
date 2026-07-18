@@ -15,7 +15,7 @@
 - 主动 IDR 默认关闭；不因运动事件或 PTS 重锁调用主动 IDR。
 - 不扩大 DATAFIFO、VENC 或 UDP 缓冲来掩盖积压，不加入 VENC 自动重启。
 - 快照继续使用 DATAFIFO `reserved` bit0；不修改跨核协议及快照标志语义。
-- OSD 最终叠加由 VENC 2D 硬件执行。CPU 只写 512×96 ARGB 素材 buffer，不读取或合成 1080P 视频帧。
+- 最终比赛版仍要求硬件 OSD；当前 `noosd_ab` 仅为根因定位实验，完全不 attach VENC 2D、不申请或更新 OSD buffer，不能作为最终比赛版本。
 
 ## 2. 调试时间线
 
@@ -73,6 +73,15 @@
 6. 小核同步快照失败合并为首个及每10次一条`[snapshot:fail]`，并保留`stage/seq/flags/writer/frame_irap/cached_irap/cached_gop/params`，这样无需用户筛选即可直接确认是否仍为`params=0/0/0`。
 7. compact版不改变编码、OSD、DATAFIFO协议、RTP重锁/自然IDR恢复或快照行为。正常10分钟大小核完整日志目标为不超过150行；该行数和大面积变化后的stall顺序仍需新ELF上板验证。
 
+### 2026-07-18：完全禁用 VENC OSD 的单变量 A/B 实验版
+
+1. 最新完整日志把长停顿首发点进一步缩到大核 VENC：seq 553 后先出现 `[stall:venc] state=start cause=zero_pack ... pending=0 cur_packs=0 pic_cnt=0`，之后至少持续到 `elapsed_ms=23585`；同期 AI 线程仍产生 event 11–17，说明运动检测旁路没有停。小核此前 `READ_DONE` 已追平且大核 `pending=0`，因此 UDP、DATAFIFO 和播放器不是该次停产的首发点。
+2. 该日志对应的旧版本启动时明确出现 `nonai_2d_attach`、`VENC 2D OSD init OK` 和运行期 `[osd:buffer]`。只移除运行期 2D 参数更新仍会停产，所以本轮把唯一变量扩大为“整个 VENC 2D/OSD 子系统是否存在”。
+3. 新大核默认 `VENC_OSD_ENABLE=0`：`osd_init()` 不申请 VB/MMZ、不 attach 2D、不下发 2D 参数；显隐、轮询和反初始化均为无副作用桩。启动唯一指纹为 `[diag] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0`，运动事件新增 `osd_enabled=0`。
+4. 保持不变：1920×1080、4000kbps、30→15fps、GOP=8、运动检测、快照请求、DATAFIFO、RTP PTS 重锁、自然随机访问恢复和停流 compact 诊断。小核继续使用现有 `rtsp_sender_withsd_compactdiag`，不重编协议或算法。
+5. 上板运行 10 分钟并制造至少 20 次大面积画面变化，只保存完整大小核日志。若不再出现 `[stall:venc]`，则 VENC 2D/OSD 链路是停产触发条件；若仍出现 `pending=0、cur_packs=0、pic_cnt=0`，则排除整个 OSD/2D 子系统，下一版采集 `/proc/umap/vicap` 和 `/proc/umap/venc` 区分主 VICAP 输出与 VENC 输入队列。
+6. 本实验版不会显示 motion detected 画面标记；快照 `params=0/0/0` 仍是独立问题，本轮不修改。
+
 ## 3. 证据与假设表
 
 | 状态 | 命题 | 关键证据 | 当前判断 |
@@ -86,12 +95,13 @@
 | 已确认 | PTS 重锁后一帧能恢复 PTS 模式 | `tests/test_rtp_clock.c` 对重锁帧断言 `pts_mode=0`，下一帧断言 `pts_mode=1` | RTP 时钟不会因一次跳变永久固定步长 |
 | 已确认 | 无大面积画面变化时可连续运行约10分钟且延迟约330ms | 用户本轮完整运行反馈；终端只截取结尾片段 | 运行时长本身不是充分触发条件 |
 | 已确认 | 本轮大面积画面变化后再次停流 | 用户现场反馈；结尾处seq停在2607，小核idle增长到4504ms且avail_read=0 | 故障仍可由大面积变化复现，具体根因未定 |
+| 已确认 | compact日志中长停顿首发于大核VENC | seq553后`[stall:venc]`持续至少23585ms，`pending=0、cur_packs=0、pic_cnt=0`；AI事件仍增长 | 故障边界在主VICAP→VENC或VENC 2D内部，不在UDP/DATAFIFO/播放器 |
 | 已确认 | 结尾两次快照未成功保存 | seq2577/2595均为`params=0/0/0`、`cannot build stream`、`ret=-1` | 标志已到小核，但缺少可播放快照所需参数集 |
 | 已排除 | `READ_DONE` 完成等于上游 VENC 正常 | 小核 health/read_done 可正常，VENC 同时持续零 pack | 两者只能分别诊断，不能互相替代 |
 | 已排除 | 客户端断开必然是首发根因 | 已观察到 VENC 先停产、UDP 后满、播放器随后卡顿/断开 | 客户端断开通常是停流结果；仍需按具体日志顺序判断 |
 | 已排除 | 固定 `clock_drift_ms` 偏移等于延迟持续增长 | 队列恢复后 drift 可保持近似常量 | 应看 drift 的斜率和 outq，而非单个绝对值 |
-| 仍待验证 | 运行期 VENC 2D 参数更新触发或放大 VENC 零包 | 停顿附近存在 `[osd:apply]`，但没有一一对应关系 | 当前版本移除运行期参数更新，需 20 次以上运动事件做 A/B 验证 |
-| 仍待验证 | 全零 ARGB 在固定全局 alpha 255 下完全透明 | 格式语义和实现假设支持，尚无新版板端画面证据 | 验收时同时检查隐藏画面和快照标记 |
+| 已排除 | 只移除运行期 VENC 2D 参数更新即可消除零包 | 固定region、只写OSD buffer的版本仍在seq553后持续零pack | A/B变量升级为完全不attach VENC 2D |
+| 仍待验证 | 整个 VENC 2D/OSD 子系统触发或放大 VENC 零包 | 旧版停顿时2D已attach且曾更新OSD buffer，尚无完全禁用版本板端结果 | 使用`noosd_ab`连续10分钟并制造至少20次大面积变化 |
 | 仍待验证 | PTS 重锁后的新门控可在 1s 内恢复低延迟 | 源码顺序和自然 IDR 逻辑已测试，尚无板端重锁日志 | 需观察规定日志顺序和恢复后 outq/播放延迟 |
 | 仍待验证 | 若移除运行期 2D 参数后仍零包，问题在 VICAP/VENC 内部状态 | 当前没有停顿时 VICAP/VENC 状态探针 | 下一步才增加状态探针，不提前修改恢复策略 |
 
@@ -100,7 +110,7 @@
 ### 代码与参数基线
 
 - 大核分支：`降低延迟`；主动 IDR 宏为 0，自然 `GOP=8`。
-- 大核 OSD：固定 region、`osd_alpha=255`、运行期只更新素材 buffer。
+- 大核 OSD：`VENC_OSD_ENABLE=0`，整个 VENC 2D attach、OSD VB/MMZ 和运行期 buffer 更新路径均不进入；启用态源码保留。
 - 大核低延迟队列：`OUTPUT_BUF_CNT=3`、`NALU_IPC_PENDING_MAX=2`、`NALU_IPC_FIFO_ENTRIES=3`。
 - 小核目录：`/home/ubuntu/Downloads/k230-lightweight-video-streaming-server-main-lowlatency-v2/small_core`。
 - 小核新产物：`user/rtsp_sender_withsd_compactdiag`；旧`rtsp_sender_withsd_rebase_idrwait`、`rtsp_sender_withsd_rtprebase`等文件保留。
@@ -145,7 +155,8 @@ ffplay -rtsp_transport udp -max_delay 0 -reorder_queue_size 0 \
 
 - 初始化：`VB init OK`、`VENC chn=0 create OK`、`VICAP init OK`、`VI->VENC bind OK`。
 - compact版本：大小核均出现`[diag] compact_diag normal=60s stall=500ms anomaly=1s`；正常期每60秒出现`[health:venc]/[health:ipc]/[health:small]`。
-- OSD：只在首次成功显示、首次成功隐藏或失败时出现`[osd:buffer]`；运行期不得出现旧`[osd:apply]`。
+- noosd A/B：启动必须出现`[diag] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0`；不得出现`VENC 2D OSD init OK`、`[osd:buffer]`或任何2D attach日志。
+- 运动事件：继续出现`[event:motion]`，字段必须包含`osd_enabled=0`和`snapshot_ret`。
 - 跨核：健康摘要中pending通常为0或短时1，`last_read_seq`应追上`last_read_done_seq`。
 - 重锁恢复：`[rtp:rebase]` -> `PTS rebase, waiting random access` -> `sent cached VPS/SPS/PPS` -> `random access start`。
 - 网络：`outq_before/outq_after` 不应持续贴近 `sndbuf_actual`，不应重复 `send queue busy`。
@@ -157,13 +168,14 @@ ffplay -rtsp_transport udp -max_delay 0 -reorder_queue_size 0 \
 
 1. 连续运行至少10分钟，制造不少于20次运动事件并包含多次大面积画面变化；直接保存大小核完整终端输出，不要求人工筛选字段。
 2. 正常10分钟大小核完整日志目标不超过150行；`[health:*]`约每60秒一次，运动事件每次一条`[event:motion]`。
-3. 运行期间不得出现旧 `[osd:apply]` 或任何运行期 VENC 2D 参数更新日志。
+3. 启动日志必须出现无OSD唯一指纹，且整个运行期不得出现VENC 2D attach/init、`[osd:buffer]`或运行期buffer更新日志；画面没有motion标记是本实验预期行为。
 4. pending稳定在0–1；若停流，日志应在500ms出现stall start，之后每秒ongoing，恢复时一条recovered，且大小核最后seq可直接对齐。
 5. 若发生 PTS 重锁，核对规定的四段日志顺序；自然随机访问恢复后下一帧应再次显示 `pts_mode=1`。
 6. UDP `outq` 不得持续达到实际 `SO_SNDBUF`，不得重复 `EAGAIN`。
 7. 卡顿恢复后 1s 内延迟回到正常区间，不得长期保持 1s 以上。
 8. 快照成功应出现captured和实际`.h265`保存路径；若出现`[snapshot:fail] ... params=0/0/0`则单独记录为快照缺参数集问题，不与VENC停流混为一因。
-9. 手动退出并确认 `Pipeline test PASSED.`。
+9. 若10分钟内不再出现`[stall:venc]`，记录“VENC 2D/OSD链路是触发条件”；若仍以`pending=0、cur_packs=0、pic_cnt=0`停产，记录“排除整个OSD/2D子系统”，下一轮才增加umap状态采集。
+10. 手动退出并确认 `Pipeline test PASSED.`。
 
 ## 6. 经验与教训
 

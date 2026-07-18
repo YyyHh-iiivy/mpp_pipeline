@@ -1,4 +1,7 @@
 #include "mpp_pipeline.h"
+
+#if VENC_OSD_ENABLE
+
 #include "motion_detected_osd_512x96_argb8888.h"
 
 /*
@@ -316,3 +319,28 @@ void osd_deinit(void)
     g_osd_inited = K_FALSE;
     LOG("VENC 2D OSD deinit OK");
 }
+
+#else /* VENC_OSD_ENABLE */
+
+k_s32 osd_init(void)
+{
+    return 0;
+}
+
+k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
+{
+    (void)visible;
+    (void)duration_ms;
+    return 0;
+}
+
+k_s32 osd_poll_auto_hide(void)
+{
+    return 0;
+}
+
+void osd_deinit(void)
+{
+}
+
+#endif /* VENC_OSD_ENABLE */

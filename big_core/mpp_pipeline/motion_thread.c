@@ -85,10 +85,11 @@ static void ai_motion_thread(void *arg)
                 snapshot_ret = stream_export_request_snapshot(&snapshot_req);
             }
 
-            LOG("[event:motion] id=%u score=%u duration_ms=%u osd_ret=0x%x snapshot_ret=0x%x",
+            LOG("[event:motion] id=%u score=%u duration_ms=%u osd_enabled=%u osd_ret=0x%x snapshot_ret=0x%x",
                 event.event_id,
                 event.motion_score,
                 event.osd_duration_ms,
+                (k_u32)VENC_OSD_ENABLE,
                 osd_ret,
                 snapshot_ret);
         }

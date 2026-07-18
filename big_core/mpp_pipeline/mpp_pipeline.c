@@ -39,6 +39,10 @@ int main(void)
     printf("  K230 MPP pipeline test\n");
     printf("========================================\n\n");
 
+#if !VENC_OSD_ENABLE
+    LOG("[diag] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0");
+#endif
+
     /* 注册信号处理 */
     signal(SIGINT,  sig_handler);
     signal(SIGTERM, sig_handler);
@@ -51,11 +55,11 @@ int main(void)
     ret = venc_create_chn(VENC_CHN, ENC_BITRATE);
     if (ret) goto cleanup;
 
-    /* Step 3: OSD 依赖 VENC 2D attach，必须在 VENC start 之前完成 */
+    /* Step 3: 初始化可选 OSD；禁用实验版只调用无副作用桩函数。 */
     ret = osd_init();
     if (ret) goto cleanup;
 
-    /* Step 4: 启动 VENC 通道，确保 2D OSD 已经附着到通道 */
+    /* Step 4: 启动 VENC 通道；启用 OSD 时此前已完成 2D attach。 */
     ret = venc_start_chn(VENC_CHN);
     if (ret) goto cleanup;
 

@@ -38,6 +38,11 @@
 #define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
 #define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */
 
+/* VENC 2D OSD 单变量 A/B 开关：本实验版完全不进入 2D 或 OSD buffer 路径。 */
+#ifndef VENC_OSD_ENABLE
+#define VENC_OSD_ENABLE 0
+#endif
+
 #ifndef VENC_FORCE_IDR_ENABLE
 #define VENC_FORCE_IDR_ENABLE 0
 #endif

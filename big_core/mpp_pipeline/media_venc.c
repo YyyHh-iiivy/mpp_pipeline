@@ -213,6 +213,9 @@ void stream_thread(void *arg)
     k_u32 health_interval_max_frame_bytes = 0;
     k_u64 health_interval_pts_delta_min_us = 0;
     k_u64 health_interval_pts_delta_max_us = 0;
+    k_u64 pack_overflow_count = 0;
+    k_u32 max_query_packs = 0;
+    k_u32 pack_alloc_fail_count = 0;
     k_u64 stall_elapsed = 0;
 
     LOG("Stream thread started");               // 记录线程启动日志
@@ -228,6 +231,8 @@ void stream_thread(void *arg)
         compact_diag_action diag_action;
         k_u64 now_ms;
         k_u64 video_pts = 0;
+        k_u32 query_pack_cnt;
+        k_venc_pack *dynamic_packs = NULL;
 
         memset(&status, 0, sizeof(status));
 
@@ -263,14 +268,30 @@ void stream_thread(void *arg)
             continue;                           // 继续下一轮循环
         }
 
-        memset(packs, 0, sizeof(packs));
         memset(&output, 0, sizeof(output));
-        output.pack = packs;
-        output.pack_cnt = status.cur_packs;      // 设置包数量
-        if (output.pack_cnt == 0)
-            output.pack_cnt = 1;
-        if (output.pack_cnt > VENC_MAX_PACKS)
-            output.pack_cnt = VENC_MAX_PACKS;
+        query_pack_cnt = status.cur_packs ? status.cur_packs : 1U;
+        if (query_pack_cnt > max_query_packs)
+            max_query_packs = query_pack_cnt;
+
+        if (query_pack_cnt > VENC_MAX_PACKS) {
+            dynamic_packs = (k_venc_pack *)calloc(query_pack_cnt, sizeof(*dynamic_packs));
+            if (!dynamic_packs) {
+                pack_alloc_fail_count++;
+                if (pack_alloc_fail_count == 1U ||
+                    (pack_alloc_fail_count % 30U) == 0U) {
+                    LOG("VENC pack descriptor alloc failed query_packs=%u count=%u",
+                        query_pack_cnt,
+                        pack_alloc_fail_count);
+                }
+                rt_thread_mdelay(5);
+                continue;
+            }
+            output.pack = dynamic_packs;
+        } else {
+            memset(packs, 0, sizeof(packs));
+            output.pack = packs;
+        }
+        output.pack_cnt = query_pack_cnt;
 
         /* 有限等待编码完成，保证信号退出和 cleanup 能回收线程 */
         ret = kd_mpi_venc_get_stream(chn, &output, VENC_GET_STREAM_TIMEOUT_MS);
@@ -286,6 +307,7 @@ void stream_thread(void *arg)
                            status.stream_info.u32PicBytesNum,
                            status.stream_info.u32MeanQp,
                            stream_export_get_pending_count());
+            free(dynamic_packs);
             if (!g_stream_running)               // 如果 cleanup 要求退出
                 break;                           // 跳出循环结束线程
             continue;                            // 暂时无流时继续等待
@@ -303,6 +325,7 @@ void stream_thread(void *arg)
                            status.stream_info.u32PicBytesNum,
                            status.stream_info.u32MeanQp,
                            stream_export_get_pending_count());
+            free(dynamic_packs);
             rt_thread_mdelay(5);
             continue;
         }
@@ -338,7 +361,37 @@ void stream_thread(void *arg)
             ret = kd_mpi_venc_release_stream(chn, &output);
             if (ret)
                 LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);
+            free(dynamic_packs);
             break;
+        }
+
+        if (query_pack_cnt > VENC_MAX_PACKS ||
+            output.pack_cnt > VENC_MAX_PACKS) {
+            k_u64 overflow_total_bytes = 0;
+
+            for (k_u32 i = 0; i < output.pack_cnt; i++)
+                overflow_total_bytes += output.pack[i].len;
+
+            pack_overflow_count++;
+            if (pack_overflow_count == 1ULL ||
+                (pack_overflow_count % 30ULL) == 0ULL) {
+                LOG("[venc:pack-overflow] query_packs=%u returned_packs=%u total_bytes=%llu pts=%llu count=%llu max_query_packs=%u",
+                    query_pack_cnt,
+                    output.pack_cnt,
+                    (unsigned long long)overflow_total_bytes,
+                    (unsigned long long)video_pts,
+                    (unsigned long long)pack_overflow_count,
+                    max_query_packs);
+            }
+
+            ret = kd_mpi_venc_release_stream(chn, &output);
+            if (ret) {
+                LOG("kd_mpi_venc_release_stream pack_overflow failed! ret=0x%x",
+                    ret);
+            }
+            free(dynamic_packs);
+            rt_thread_mdelay(1);
+            continue;
         }
 
         {
@@ -356,6 +409,7 @@ void stream_thread(void *arg)
                 if (ret) {
                     LOG("kd_mpi_venc_release_stream stale_drop failed! ret=0x%x", ret);
                 }
+                free(dynamic_packs);
 
                 if (freshness.stale_drop_count == 1 ||
                     (freshness.stale_drop_count % 30ULL) == 0) {
@@ -401,6 +455,7 @@ void stream_thread(void *arg)
                 LOG("kd_mpi_venc_release_stream failed! ret=0x%x", ret);  // 记录错误日志
             }
         }
+        free(dynamic_packs);
 
         if (!g_stream_running)
             break;
@@ -418,7 +473,7 @@ void stream_thread(void *arg)
             double health_avg_frame_bytes = health_interval_frames > 0 ?
                 (double)health_interval_bytes /
                 (double)health_interval_frames : 0.0;
-            LOG("[health:venc] uptime_s=%llu fps=%.1f kbps=%.1f interval_bytes=%llu avg_frame_bytes=%.1f max_frame_bytes=%u pts_delta_min_us=%llu pts_delta_max_us=%llu mean_qp=%u total_frames=%u total_bytes=%llu last_pts=%llu last_pts_age_ms=%llu cur_packs=%u pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu",
+            LOG("[health:venc] uptime_s=%llu fps=%.1f kbps=%.1f interval_bytes=%llu avg_frame_bytes=%.1f max_frame_bytes=%u pts_delta_min_us=%llu pts_delta_max_us=%llu mean_qp=%u total_frames=%u total_bytes=%llu last_pts=%llu last_pts_age_ms=%llu cur_packs=%u pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu max_query_packs=%u pack_overflow_count=%llu",
                 (unsigned long long)((now_ms - stream_start_ms) / 1000ULL),
                 health_fps,
                 health_kbps,
@@ -436,7 +491,9 @@ void stream_thread(void *arg)
                 stream_export_get_pending_count(),
                 (long long)source_drift_ms,
                 (long long)freshness.max_drift_ms,
-                (unsigned long long)freshness.stale_drop_count);
+                (unsigned long long)freshness.stale_drop_count,
+                max_query_packs,
+                (unsigned long long)pack_overflow_count);
             health_interval_start_ms = now_ms;
             health_interval_frames = 0;
             health_interval_bytes = 0;

@@ -99,7 +99,7 @@ k_s32 venc_request_idr_once(k_u32 chn, const char *reason)
 /* ================================================================
  * Step 2: VENC 编码通道配置
  *
- * H.265 Main Profile, CBR 4000kbps
+ * H.265 Main Profile, CBR 1500kbps
  *
  * 注意: src_frame_rate/dst_frame_rate 是 VENC 码率控制/目标帧率参数；
  * 当前 VICAP->VENC 硬件绑定链路是否实际降帧，要以 stream_thread 统计为准。

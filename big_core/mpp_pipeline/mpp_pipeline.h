@@ -33,7 +33,7 @@
 /* 编码参数 */
 #define ENC_WIDTH    1920
 #define ENC_HEIGHT   1080
-#define ENC_BITRATE  4000        /* kbps */
+#define ENC_BITRATE  1500        /* kbps；低延迟优先，限制大面积运动时的关键帧突发 */
 #define SRC_FPS      15          /* VENC 通道输入帧率参数；与 VICAP 主通道请求输出保持一致 */
 #define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
 #define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */

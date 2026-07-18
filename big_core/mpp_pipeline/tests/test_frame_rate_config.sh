@@ -34,6 +34,8 @@ require_pattern "$header" '^[[:space:]]*#define[[:space:]]+DST_FPS[[:space:]]+15
     "DST_FPS must be 15fps for the low-latency RTSP profile"
 require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VICAP_OUTPUT_FPS[[:space:]]+15([[:space:]]|$)' \
     "VICAP_OUTPUT_FPS must request 15fps VICAP channel output"
+require_pattern "$header" '^[[:space:]]*#define[[:space:]]+ENC_BITRATE[[:space:]]+1500([[:space:]]|$)' \
+    "ENC_BITRATE must use the 1500kbps low-latency, burst-limited profile"
 require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VENC_HEALTH_INTERVAL_MS[[:space:]]+5000ULL([[:space:]]|$)' \
     "VENC health statistics must use a five-second interval"
 require_pattern "$header" '^[[:space:]]*#define[[:space:]]+VENC_FORCE_IDR_ENABLE[[:space:]]+0([[:space:]]|$)' \

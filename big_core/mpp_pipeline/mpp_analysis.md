@@ -67,16 +67,16 @@ attr.venc_attr.pic_height = 1080;
 
 // 码率控制 (CBR)
 attr.rc_attr.rc_mode = K_VENC_RC_MODE_CBR;
-attr.rc_attr.cbr.src_frame_rate = 30;      // 传感器输入
+attr.rc_attr.cbr.src_frame_rate = 15;      // 与VICAP主通道请求节拍一致
 attr.rc_attr.cbr.dst_frame_rate = 15;      // 目标输出
-attr.rc_attr.cbr.bit_rate = 4000;          // 4 Mbps
-attr.rc_attr.cbr.gop = 30;                 // I帧间隔 (2s)
+attr.rc_attr.cbr.bit_rate = 1500;          // 1.5 Mbps，低延迟优先并限制关键帧突发
+attr.rc_attr.cbr.gop = 8;                  // 自然关键帧间隔约533ms
 ```
 
 关键决策:
 - ✅ **H.265 Main Profile**: 硬件编码器标准配置
-- ✅ **CBR 4000kbps**: 恒定码率，稳定网络传输
-- ✅ **30→15fps** 帧率转换: 硬件自动下采样（不是丢帧）
+- ✅ **CBR 1500kbps**: 牺牲运动画质，降低关键帧突发填满UDP发送队列的概率
+- ✅ **15→15fps**: VICAP请求节拍与VENC输入/目标帧率一致
 
 ### Step 3: VICAP配置（虚拟摄像头输入）
 **函数**: `vicap_config()`

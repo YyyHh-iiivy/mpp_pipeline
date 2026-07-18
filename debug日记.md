@@ -91,6 +91,12 @@
 4. 该次异常前后 `clock_drift_ms` 分别约56ms和44ms，PTS增量仍约66696us，没有 `[rtp:rebase]`，因此不能归因于RTP前向PTS重锁；播放器延迟增加更符合UDP丢失关键帧后的重缓冲。
 5. 用户选择低延迟优先并接受运动画质下降。本轮唯一运行参数改为 `ENC_BITRATE=1500kbps`，保持1080p、15fps、GOP=8、UDP请求缓冲128KiB、零packet pacing、非阻塞立即丢帧、DATAFIFO和RTP时钟不变；目标是从源头缩小关键帧突发。
 
+### 2026-07-18：小核正常链路延迟画像
+
+1. 在小核 RTP 发送线程加入独立 `latency_profile` 统计模块，覆盖 `msg_age`、copy、`READ_DONE`、RTP send 和 UDP outq 前后值；每类输出平均值、P90 和最大值。
+2. 画像只在已有有效 outq 探针时采样，按5秒低频输出 `[latency:profile]` 后清空窗口，不改变 DATAFIFO、RTP、丢帧或自然随机访问恢复逻辑。
+3. 主机测试、交叉编译和 `make verify` 已通过；尚未上板，因此该模块当前只提供延迟分段证据，不能据此宣称端到端延迟已下降。
+
 ## 3. 证据与假设表
 
 | 状态 | 命题 | 关键证据 | 当前判断 |

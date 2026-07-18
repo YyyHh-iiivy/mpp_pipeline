@@ -17,6 +17,7 @@ SOURCES := \
 	src/RTSP_Create.c \
 	src/datafifo_snapshot.c \
 	src/file.c \
+	src/latency_profile.c \
 	src/nalu_datafifo.c \
 	src/rtp.c \
 	src/rtp_clock.c \
@@ -27,6 +28,7 @@ SOURCES := \
 HEADERS := \
 	lnc/datafifo_snapshot.h \
 	lnc/file.h \
+	lnc/latency_profile.h \
 	lnc/nalu_datafifo.h \
 	lnc/rtp.h \
 	lnc/rtp_clock.h \
@@ -59,6 +61,7 @@ test:
 	sh tests/test_datafifo_health_diag.sh
 	sh tests/test_rebase_idr_wait.sh
 	sh tests/test_compact_diag.sh
+	sh tests/test_latency_profile.sh
 
 verify:
 	test -x $(TARGET)
@@ -72,6 +75,7 @@ verify:
 	$(STRINGS) $(TARGET) | grep -q '\[diag\] compact_diag normal=60s stall=500ms anomaly=1s'
 	$(STRINGS) $(TARGET) | grep -q '\[health:small\]'
 	$(STRINGS) $(TARGET) | grep -q '\[stall:small\]'
+	$(STRINGS) $(TARGET) | grep -q '\[latency:profile\]'
 
 clean:
 	rm -f $(TARGET)

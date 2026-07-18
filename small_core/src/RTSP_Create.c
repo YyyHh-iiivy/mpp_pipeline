@@ -26,6 +26,7 @@
 
 #include "datafifo_snapshot.h"
 #include "file.h"
+#include "latency_profile.h"
 #include "nalu_datafifo.h"
 #include "rtp.h"
 #include "rtsp.h"
@@ -505,7 +506,8 @@ static void rtp_diag_log_frame(int sock,
                                uint64_t frame_seq,
                                uint32_t frame_rtp_ts,
                                int outq_before,
-                               int query_failed)
+                               int query_failed,
+                               int *outq_after_out)
 {
     uint64_t now_ms;
     uint64_t wall_elapsed_ms = 0;
@@ -522,6 +524,9 @@ static void rtp_diag_log_frame(int sock,
     }
 
     outq_after = rtp_diag_read_outq(sock, diag, &query_failed);
+    if (outq_after_out != NULL) {
+        *outq_after_out = outq_after;
+    }
     if (outq_before >= 0 && (uint32_t)outq_before > diag->outq_high) {
         diag->outq_high = (uint32_t)outq_before;
     }
@@ -672,6 +677,30 @@ static void small_diag_log_health(nalu_datafifo_reader_t *reader,
            outq_value,
            rtp_diag ? rtp_diag->actual_sndbuf : 0U);
     *last_health_ms = now_ms;
+}
+
+static void small_latency_profile_log(latency_profile *profile,
+                                      uint64_t *last_log_ms)
+{
+    char summary[1024];
+    uint64_t now_ms;
+    int summary_len;
+
+    if (profile == NULL || last_log_ms == NULL) {
+        return;
+    }
+    now_ms = monotonic_ms();
+    if (*last_log_ms != 0 &&
+        now_ms >= *last_log_ms && now_ms - *last_log_ms < 5000ULL) {
+        return;
+    }
+    summary_len = latency_profile_format(profile, summary, sizeof(summary));
+    if (summary_len <= 0) {
+        return;
+    }
+    printf("[latency:profile] %s\n", summary);
+    latency_profile_init(profile);
+    *last_log_ms = now_ms;
 }
 
 static void log_datafifo_frame_stats(uint64_t seq,
@@ -1324,12 +1353,14 @@ static void *datafifo_rtp_sender_loop(int sock)
     uint32_t ssrc = 0x22334455;
     rtp_clock_state_t rtp_clock;
     rtp_diag_state_t rtp_diag;
+    latency_profile latency_stats;
     small_diag_tracker small_diag;
     uint64_t last_sent_seq = 0;
     uint64_t last_read_seq = 0;
     uint64_t last_item_ms = monotonic_ms();
     uint64_t diag_start_ms = last_item_ms;
     uint64_t last_health_ms = diag_start_ms;
+    uint64_t last_latency_log_ms = diag_start_ms;
     unsigned int frame_count = 0;
     int wait_for_idr = 0;
     uint64_t read_done_seq = 0;
@@ -1345,6 +1376,7 @@ static void *datafifo_rtp_sender_loop(int sock)
     rtp_clock_reset(&rtp_clock, timestamp);
     rtp_diag_reset(&rtp_diag, sock, timestamp);
     small_diag_tracker_init(&small_diag, diag_start_ms);
+    latency_profile_init(&latency_stats);
     printf("[diag] compact_diag normal=60s stall=500ms anomaly=1s\n");
 
     while (1) {
@@ -1363,6 +1395,7 @@ static void *datafifo_rtp_sender_loop(int sock)
         int send_failed = 0;
         int large_frame = 0;
         int outq_before = -1;
+        int outq_after = -1;
         int outq_query_failed = 0;
         int read_done_ret = -1;
         uint64_t msg_seq = 0;
@@ -1409,6 +1442,8 @@ static void *datafifo_rtp_sender_loop(int sock)
             timestamp = 0x12345678;
             rtp_clock_reset(&rtp_clock, timestamp);
             rtp_diag_reset(&rtp_diag, sock, timestamp);
+            latency_profile_init(&latency_stats);
+            last_latency_log_ms = monotonic_ms();
             last_sent_seq = 0;
             wait_for_idr = 1;
             g_wait_random_access_skip_count = 0;
@@ -1713,7 +1748,17 @@ static void *datafifo_rtp_sender_loop(int sock)
                                    owned_frame.frame.seq,
                                    frame_rtp_ts,
                                    outq_before,
-                                   outq_query_failed);
+                                   outq_query_failed,
+                                   &outq_after);
+                if (outq_before >= 0 && outq_after >= 0) {
+                    latency_profile_observe(&latency_stats,
+                                            msg_age_ms,
+                                            copy_cost_ms,
+                                            read_done_cost_ms,
+                                            send_cost_ms,
+                                            (uint64_t)outq_before,
+                                            (uint64_t)outq_after);
+                }
                 if (large_frame) {
                     log_large_frame_stage("rtp",
                                           owned_frame.frame.seq,
@@ -1748,6 +1793,7 @@ static void *datafifo_rtp_sender_loop(int sock)
                                      send_cost_ms > RTP_SLOW_SEND_MS ||
                                      send_failed);
             datafifo_owned_frame_free(&owned_frame);
+            small_latency_profile_log(&latency_stats, &last_latency_log_ms);
         } else if (valid_msg && !stale_frame) {
             frame_count++;
         }

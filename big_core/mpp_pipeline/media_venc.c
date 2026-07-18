@@ -156,6 +156,7 @@ void stream_thread(void *arg)
     k_u32 interval_frames = 0;                  // 区间帧计数器，用于计算区间内的帧率
     k_u32 query_fail_count = 0;                 // 查询失败计数，用于限制日志频率
     k_u32 get_fail_count = 0;                   // get_stream失败计数，用于限制日志频率
+    k_u32 submit_fail_count = 0;
     k_s64 source_drift_ms = 0;
     stream_freshness_tracker freshness;
 
@@ -252,8 +253,18 @@ void stream_thread(void *arg)
         }
 
         ret = stream_export_submit_venc_stream(chn, &output, &release_by_caller);
-        if (ret)
-            LOG("stream_export_submit_venc_stream failed! ret=0x%x", ret);
+        if (ret) {
+            submit_fail_count++;
+            if (submit_fail_count == 1 || (submit_fail_count % 15U) == 0) {
+                LOG("stream_export_submit_venc_stream failed! ret=0x%x status_cur_packs=%u output_pack_cnt=%u release_by_caller=%u pending=%u failures=%u",
+                    ret,
+                    status.cur_packs,
+                    output.pack_cnt,
+                    (unsigned int)release_by_caller,
+                    stream_export_get_pending_count(),
+                    submit_fail_count);
+            }
+        }
 
         if (release_by_caller) {
             ret = kd_mpi_venc_release_stream(chn, &output);  // 释放已获取的码流资源

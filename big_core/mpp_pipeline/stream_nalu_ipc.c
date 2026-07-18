@@ -45,6 +45,8 @@ static k_u64 g_last_read_done_seq;
 static k_u64 g_last_read_done_age_ms;
 static k_u64 g_last_frame_pts;
 static k_u64 g_last_submit_time_for_delta_ms;
+static k_u64 g_submit_fail_diag_count;
+static k_u64 g_drain_no_progress_count;
 /* Tracks streams that were handed to DATAFIFO but not yet READ_DONE by Linux. */
 static nalu_ipc_pending_item g_pending[NALU_IPC_PENDING_MAX];
 
@@ -68,6 +70,48 @@ static k_u64 nalu_ipc_now_ms(void)
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
+}
+
+static k_u32 nalu_ipc_stream_total_len(const k_venc_stream *stream)
+{
+    k_u32 total_len = 0;
+
+    if (!stream || !stream->pack)
+        return 0;
+
+    for (k_u32 i = 0; i < stream->pack_cnt; i++)
+        total_len += stream->pack[i].len;
+
+    return total_len;
+}
+
+static void nalu_ipc_log_submit_failure(const char *stage,
+                                        k_u64 seq,
+                                        k_s32 ret,
+                                        const k_venc_stream *stream,
+                                        k_u32 avail_write_len)
+{
+    k_u32 total_len = nalu_ipc_stream_total_len(stream);
+
+    g_submit_fail_diag_count++;
+    if (g_submit_fail_diag_count != 1 &&
+        (g_submit_fail_diag_count % 15ULL) != 0 &&
+        total_len < 64U * 1024U) {
+        return;
+    }
+
+    LOG("[ipc:submit-fail] stage=%s seq=%llu ret=0x%x pack_cnt=%u total_len=%u pending=%u pending_high_water=%u avail_write=%u last_read_done_seq=%llu read_done_age_ms=%llu failures=%llu",
+        stage ? stage : "unknown",
+        (unsigned long long)seq,
+        ret,
+        stream ? stream->pack_cnt : 0,
+        total_len,
+        g_pending_count,
+        g_pending_high_water,
+        avail_write_len,
+        (unsigned long long)g_last_read_done_seq,
+        (unsigned long long)g_last_read_done_age_ms,
+        (unsigned long long)g_submit_fail_diag_count);
 }
 
 static k_s32 ctrl_ipc_init(void)
@@ -269,9 +313,32 @@ static k_s32 nalu_ipc_drain_releases(void)
     k_u32 last_pending = g_pending_count;
 
     for (k_u32 pass = 0; pass < NALU_IPC_DRAIN_MAX_PASSES; pass++) {
+        k_u32 pending_before = g_pending_count;
+
         ret = kd_datafifo_write(g_nalu_fifo, NULL);
-        if (ret)
+        if (ret) {
+            LOG("[ipc:drain] pass=%u ret=0x%x pending_before=%u pending_after=%u last_read_done_seq=%llu",
+                pass,
+                ret,
+                pending_before,
+                g_pending_count,
+                (unsigned long long)g_last_read_done_seq);
             return ret;
+        }
+
+        if (pending_before > 0 && g_pending_count >= pending_before) {
+            g_drain_no_progress_count++;
+            if (g_drain_no_progress_count == 1 ||
+                (g_drain_no_progress_count % 15ULL) == 0) {
+                LOG("[ipc:drain] pass=%u ret=0x%x pending_before=%u pending_after=%u last_read_done_seq=%llu no_progress=%llu",
+                    pass,
+                    ret,
+                    pending_before,
+                    g_pending_count,
+                    (unsigned long long)g_last_read_done_seq,
+                    (unsigned long long)g_drain_no_progress_count);
+            }
+        }
 
         if (g_pending_count == 0 || g_pending_count >= last_pending)
             break;
@@ -398,6 +465,8 @@ k_s32 nalu_ipc_init(void)
     g_last_read_done_age_ms = 0;
     g_last_frame_pts = 0;
     g_last_submit_time_for_delta_ms = 0;
+    g_submit_fail_diag_count = 0;
+    g_drain_no_progress_count = 0;
     g_nalu_fifo_phy_addr = 0;
 
     ret = kd_datafifo_open(&g_nalu_fifo, &g_nalu_fifo_params);
@@ -480,13 +549,18 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
     k_u64 submit_time_ms;
     nalu_ipc_pending_item *pending;
 
-    if (!g_nalu_fifo_inited || g_nalu_fifo == K_DATAFIFO_INVALID_HANDLE)
+    if (!g_nalu_fifo_inited || g_nalu_fifo == K_DATAFIFO_INVALID_HANDLE) {
+        nalu_ipc_log_submit_failure("not_initialized", 0, -1, stream, 0);
         return -1;
-    if (!stream || !stream->pack || stream->pack_cnt == 0)
+    }
+    if (!stream || !stream->pack || stream->pack_cnt == 0) {
+        nalu_ipc_log_submit_failure("invalid_stream", 0, -1, stream, 0);
         return -1;
+    }
     if (stream->pack_cnt > MPP_NALU_IPC_MAX_PACKS) {
         LOG("NALU IPC pack_cnt=%u exceeds max=%u",
             stream->pack_cnt, MPP_NALU_IPC_MAX_PACKS);
+        nalu_ipc_log_submit_failure("pack_count", 0, -1, stream, 0);
         return -1;
     }
 
@@ -500,6 +574,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
         LOG("nalu_ipc_drain_releases failed! ret=0x%x", ret);
         g_write_fail_count++;
         (void)nalu_ipc_drop_current_stream(seq, "flush_failed", 0);
+        nalu_ipc_log_submit_failure("drain", seq, ret, stream, 0);
         return ret;
     }
 
@@ -511,10 +586,12 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
         LOG("DATAFIFO_CMD_GET_AVAIL_WRITE_LEN failed! ret=0x%x", ret);
         g_write_fail_count++;
         (void)nalu_ipc_drop_current_stream(seq, "query_space_failed", 0);
+        nalu_ipc_log_submit_failure("query_space", seq, ret, stream, 0);
         return ret;
     }
     if (avail_write_len < MPP_NALU_IPC_ITEM_SIZE) {
         g_datafifo_full_count++;
+        nalu_ipc_log_submit_failure("datafifo_full", seq, -1, stream, avail_write_len);
         return nalu_ipc_drop_current_stream(seq, "datafifo_full", avail_write_len);
     }
 
@@ -528,6 +605,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
             (void)nalu_ipc_drop_current_stream(seq,
                                                "pending_full_drain_failed",
                                                avail_write_len);
+            nalu_ipc_log_submit_failure("pending_drain", seq, ret, stream, avail_write_len);
             return ret;
         }
 
@@ -535,6 +613,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
         if (!pending) {
             g_pending_full_count++;
             nalu_ipc_log_pending_slots("pending_full_after_drain", avail_write_len);
+            nalu_ipc_log_submit_failure("pending_full", seq, -1, stream, avail_write_len);
             return nalu_ipc_drop_current_stream(seq,
                                                 "pending_full_after_drain",
                                                 avail_write_len);
@@ -556,6 +635,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
             g_pending_count--;
         memset(pending, 0, sizeof(*pending));
         (void)nalu_ipc_drop_current_stream(seq, "write_failed", avail_write_len);
+        nalu_ipc_log_submit_failure("write", seq, ret, stream, avail_write_len);
         return ret;
     }
 
@@ -568,6 +648,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
             g_pending_count--;
         memset(pending, 0, sizeof(*pending));
         (void)nalu_ipc_drop_current_stream(seq, "write_done_failed", avail_write_len);
+        nalu_ipc_log_submit_failure("write_done", seq, ret, stream, avail_write_len);
         return ret;
     }
 

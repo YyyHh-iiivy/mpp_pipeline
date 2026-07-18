@@ -22,7 +22,29 @@ static k_u32 g_pending_snapshot_count;
 static k_u32 g_snapshot_wait_frames;
 static k_u32 g_snapshot_request_head;
 static k_u32 g_snapshot_request_tail;
+static k_u32 g_export_fail_diag_count;
 static snapshot_request_msg g_snapshot_requests[SNAPSHOT_PENDING_MAX];
+
+static void stream_export_log_failure(const char *stage,
+                                      const k_venc_stream *stream,
+                                      k_s32 ret)
+{
+    g_export_fail_diag_count++;
+    if (g_export_fail_diag_count != 1 &&
+        (g_export_fail_diag_count % 15U) != 0) {
+        return;
+    }
+
+    LOG("[export:fail] stage=%s ret=0x%x inited=%u mode=%u stream=%p pack=%p pack_cnt=%u failures=%u",
+        stage ? stage : "unknown",
+        ret,
+        (unsigned int)g_stream_export_inited,
+        (unsigned int)g_stream_export_mode,
+        stream,
+        stream ? stream->pack : NULL,
+        stream ? stream->pack_cnt : 0,
+        g_export_fail_diag_count);
+}
 
 static void stream_export_reset_snapshot_requests(void)
 {
@@ -137,6 +159,7 @@ k_s32 stream_export_init(stream_export_mode mode)
     stream_export_reset_snapshot_requests();
     g_stream_export_mode = mode;
     g_stream_export_frame_count = 0;
+    g_export_fail_diag_count = 0;
     g_stream_export_inited = K_TRUE;
 
     if (mode == STREAM_EXPORT_DATAFIFO) {
@@ -180,11 +203,15 @@ k_s32 stream_export_submit_venc_stream(k_u32 chn,
     if (release_by_caller)
         *release_by_caller = K_TRUE;
 
-    if (!release_by_caller || !stream || !stream->pack || stream->pack_cnt == 0)
+    if (!release_by_caller || !stream || !stream->pack || stream->pack_cnt == 0) {
+        stream_export_log_failure("invalid_args", stream, -1);
         return -1;
+    }
 
-    if (!g_stream_export_inited)
+    if (!g_stream_export_inited) {
+        stream_export_log_failure("not_initialized", stream, -1);
         return -1;
+    }
 
     ctrl_ipc_poll();
     snapshot_flags = stream_export_select_snapshot_flags(stream);
@@ -192,6 +219,7 @@ k_s32 stream_export_submit_venc_stream(k_u32 chn,
     if (g_stream_export_mode == STREAM_EXPORT_DATAFIFO) {
         ret = nalu_ipc_submit_stream(chn, stream, snapshot_flags);
         if (ret) {
+            stream_export_log_failure("nalu_ipc_submit", stream, ret);
             *release_by_caller = K_TRUE;
             return ret;
         }

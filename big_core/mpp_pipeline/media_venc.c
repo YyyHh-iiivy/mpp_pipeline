@@ -172,7 +172,7 @@ void stream_thread(void *arg)
         k_venc_chn_status status;               // VENC通道状态结构体
         k_bool release_by_caller = K_TRUE;       // 导出层返回的释放责任
 
-        /* 所有运行期VENC 2D API与query/get/release在本线程串行执行。 */
+        /* 在VENC query/get前串行完成固定OSD region的素材buffer更新。 */
         (void)osd_poll_auto_hide();
 
         /*

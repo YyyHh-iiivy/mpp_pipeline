@@ -74,8 +74,8 @@ if printf '%s\n' "$osd_request_body" | grep -q 'kd_mpi_venc_set_2d_osd_param'; t
     echo "osd_set_motion_visible must queue state only and never call the VENC driver"
     exit 1
 fi
-if ! grep -q '\[osd:apply\] generation=' "$osd_file"; then
-    echo "runtime OSD apply diagnostics must include generation and result"
+if ! grep -q '\[osd:buffer\] generation=' "$osd_file"; then
+    echo "runtime OSD buffer diagnostics must include generation and result"
     exit 1
 fi
 if ! grep -q 'g_osd_request_generation' "$osd_file"; then
@@ -83,7 +83,7 @@ if ! grep -q 'g_osd_request_generation' "$osd_file"; then
     exit 1
 fi
 if ! grep -q 'g_osd_retry_after_ms' "$osd_file"; then
-    echo "failed runtime OSD updates must use bounded retry pacing"
+    echo "failed runtime OSD cache flushes must use bounded retry pacing"
     exit 1
 fi
 if grep -Eq 'rt_timer_(create|control|start|stop|delete)' "$osd_file"; then

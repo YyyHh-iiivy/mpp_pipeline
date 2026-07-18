@@ -5,6 +5,14 @@ static rt_sem_t g_ai_motion_exit_sem = RT_NULL;
 static volatile int g_ai_motion_running;
 static k_bool g_ai_motion_started;
 
+static k_u64 ai_motion_now_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
+}
+
 static k_bool wait_ai_motion_thread_exit(k_u32 timeout_ms)
 {
     k_u32 waited_ms = 0;
@@ -30,25 +38,37 @@ static k_bool wait_ai_motion_thread_exit(k_u32 timeout_ms)
  *
  * The loop owns the full per-frame lifecycle:
  * 1. ai_frame_try_get() dumps and maps one AI-channel Y plane.
- * 2. motion_adapter_process() runs detection and builds a motion event.
+ * 2. A monotonic 66ms gate decides whether motion_adapter_process() runs;
+ *    skipped dump frames are not passed to the algorithm.
  * 3. ai_frame_release() always returns the dump frame and mmap mapping.
  * 4. OSD and snapshot requests are issued only after the frame is released.
  */
 static void ai_motion_thread(void *arg)
 {
     k_u32 timeout_count = 0;
-    k_u32 frame_count = 0;
+    k_u32 dump_count = 0;
+    k_u32 processed_count = 0;
+    k_u32 skipped_count = 0;
+    k_u64 thread_start_ms;
+    k_u64 last_process_ms = 0;
+    k_bool have_last_process = K_FALSE;
 
     (void)arg;
+    thread_start_ms = ai_motion_now_ms();
     LOG("AI motion thread started");
+    LOG("AI motion processing config: fps=%u interval_ms=%u",
+        (k_u32)AI_MOTION_PROCESS_FPS,
+        (k_u32)AI_MOTION_PROCESS_INTERVAL_MS);
 
     while (g_ai_motion_running && g_running) {
         k_s32 ret;
         ai_gray_frame_view frame;
         motion_event_msg event;
         k_bool has_event = K_FALSE;
+        k_bool process_frame;
         void *ai_frame_handle = NULL;
         k_s32 release_ret;
+        k_u64 now_ms;
 
         ret = ai_frame_try_get(&frame, &ai_frame_handle);
         if (ret) {
@@ -58,9 +78,23 @@ static void ai_motion_thread(void *arg)
             continue;
         }
         timeout_count = 0;
-        frame_count++;
+        dump_count++;
 
-        ret = motion_adapter_process(&frame, &event, &has_event);
+        /* Dump 频率可能高于算法目标频率；只跳过算法，不能延迟持帧。 */
+        now_ms = ai_motion_now_ms();
+        process_frame = !have_last_process ||
+                        now_ms - last_process_ms >=
+                        (k_u64)AI_MOTION_PROCESS_INTERVAL_MS;
+        if (process_frame) {
+            last_process_ms = now_ms;
+            have_last_process = K_TRUE;
+            processed_count++;
+            ret = motion_adapter_process(&frame, &event, &has_event);
+        } else {
+            skipped_count++;
+            ret = 0;
+        }
+
         release_ret = ai_frame_release(ai_frame_handle);
         if (release_ret)
             LOG("ai_frame_release failed! ret=0x%x", release_ret);
@@ -95,7 +129,18 @@ static void ai_motion_thread(void *arg)
         }
     }
 
-    LOG("AI motion thread stopped, frames=%u", frame_count);
+    {
+        k_u64 elapsed_ms = ai_motion_now_ms() - thread_start_ms;
+        double process_fps = elapsed_ms > 0 ?
+            (double)processed_count * 1000.0 / (double)elapsed_ms : 0.0;
+
+        LOG("AI motion thread stopped, frames=%u dump_frames=%u processed_frames=%u skipped_frames=%u actual_process_fps=%.1f",
+            dump_count,
+            dump_count,
+            processed_count,
+            skipped_count,
+            process_fps);
+    }
     if (g_ai_motion_exit_sem != RT_NULL)
         rt_sem_release(g_ai_motion_exit_sem);
 }

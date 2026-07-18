@@ -132,10 +132,10 @@ k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
 
     /* 码率控制: CBR */
     attr.rc_attr.rc_mode           = K_VENC_RC_MODE_CBR;  // 设置码率控制模式为CBR（恒定比特率）
-    attr.rc_attr.cbr.src_frame_rate = SRC_FPS;    // VENC通道输入帧率参数，当前VICAP实际约30fps
+    attr.rc_attr.cbr.src_frame_rate = SRC_FPS;    // VENC通道输入帧率参数，与VICAP主通道请求节拍一致
     attr.rc_attr.cbr.dst_frame_rate = DST_FPS;    // VENC目标输出帧率参数；不负责配置VICAP硬件丢帧
     attr.rc_attr.cbr.bit_rate       = bitrate;    // 设置目标码率为指定值
-    attr.rc_attr.cbr.gop            = VENC_GOP;  /* 跟随 DST_FPS，约 1 秒一个 I 帧 */
+    attr.rc_attr.cbr.gop            = VENC_GOP;  /* 默认8帧，15fps时自然I帧间隔约533ms */
 
     ret = kd_mpi_venc_create_chn(chn, &attr);     // 创建VENC通道，使用指定的通道号和属性
     if (ret) {                                  // 检查通道创建是否成功
@@ -145,10 +145,11 @@ k_s32 venc_create_chn(k_u32 chn, k_u32 bitrate)
     g_status = STATUS_VENC_CREATED;             // 更新全局状态为VENC已创建
 
     LOG("VENC chn=%u create OK", chn);         // 记录创建成功的日志
-    LOG("Low-latency VENC config: src_fps=%u dst_fps=%u vicap_fps=%u gop=%u input_buf=%u output_buf=%u drift_drop_ms=%lld drift_clear_ms=%lld",
+    LOG("Low-latency VENC config: src_fps=%u dst_fps=%u vicap_fps=%u bitrate_kbps=%u gop=%u input_buf=%u output_buf=%u drift_drop_ms=%lld drift_clear_ms=%lld",
         SRC_FPS,
         DST_FPS,
         VICAP_OUTPUT_FPS,
+        bitrate,
         VENC_GOP,
         INPUT_BUF_CNT,
         OUTPUT_BUF_CNT,
@@ -208,7 +209,10 @@ void stream_thread(void *arg)
     k_u64 health_interval_start_ms = stream_start_ms;
     k_u64 last_valid_pts = 0;
     k_u32 health_interval_frames = 0;
-    k_u32 health_interval_bytes = 0;
+    k_u64 health_interval_bytes = 0;
+    k_u32 health_interval_max_frame_bytes = 0;
+    k_u64 health_interval_pts_delta_min_us = 0;
+    k_u64 health_interval_pts_delta_max_us = 0;
     k_u64 stall_elapsed = 0;
 
     LOG("Stream thread started");               // 记录线程启动日志
@@ -316,8 +320,19 @@ void stream_thread(void *arg)
                        status.stream_info.u32MeanQp,
                        stream_export_get_pending_count());
         last_valid_stream_ms = now_ms;
-        if (video_pts != 0)
+        if (video_pts != 0) {
+            if (last_valid_pts != 0 && video_pts > last_valid_pts) {
+                k_u64 pts_delta_us = video_pts - last_valid_pts;
+
+                if (health_interval_pts_delta_min_us == 0 ||
+                    pts_delta_us < health_interval_pts_delta_min_us) {
+                    health_interval_pts_delta_min_us = pts_delta_us;
+                }
+                if (pts_delta_us > health_interval_pts_delta_max_us)
+                    health_interval_pts_delta_max_us = pts_delta_us;
+            }
             last_valid_pts = video_pts;
+        }
 
         if (!g_stream_running) {
             ret = kd_mpi_venc_release_stream(chn, &output);
@@ -361,6 +376,8 @@ void stream_thread(void *arg)
                 total_bytes += output.pack[i].len;  // 累加数据长度
                 health_interval_frames++;
                 health_interval_bytes += output.pack[i].len;
+                if (output.pack[i].len > health_interval_max_frame_bytes)
+                    health_interval_max_frame_bytes = output.pack[i].len;
             }
         }
 
@@ -390,15 +407,27 @@ void stream_thread(void *arg)
 
         now_ms = venc_now_ms();
         if (now_ms - health_interval_start_ms >=
-            COMPACT_DIAG_NORMAL_INTERVAL_MS) {
+            VENC_HEALTH_INTERVAL_MS) {
             k_u64 health_elapsed_ms = now_ms - health_interval_start_ms;
             double health_fps = health_elapsed_ms > 0 ?
                 (double)health_interval_frames * 1000.0 /
                 (double)health_elapsed_ms : 0.0;
-            LOG("[health:venc] uptime_s=%llu fps=%.1f interval_bytes=%u total_frames=%u total_bytes=%llu last_pts=%llu last_pts_age_ms=%llu cur_packs=%u pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu",
+            double health_kbps = health_elapsed_ms > 0 ?
+                (double)health_interval_bytes * 8.0 /
+                (double)health_elapsed_ms : 0.0;
+            double health_avg_frame_bytes = health_interval_frames > 0 ?
+                (double)health_interval_bytes /
+                (double)health_interval_frames : 0.0;
+            LOG("[health:venc] uptime_s=%llu fps=%.1f kbps=%.1f interval_bytes=%llu avg_frame_bytes=%.1f max_frame_bytes=%u pts_delta_min_us=%llu pts_delta_max_us=%llu mean_qp=%u total_frames=%u total_bytes=%llu last_pts=%llu last_pts_age_ms=%llu cur_packs=%u pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu",
                 (unsigned long long)((now_ms - stream_start_ms) / 1000ULL),
                 health_fps,
-                health_interval_bytes,
+                health_kbps,
+                (unsigned long long)health_interval_bytes,
+                health_avg_frame_bytes,
+                health_interval_max_frame_bytes,
+                (unsigned long long)health_interval_pts_delta_min_us,
+                (unsigned long long)health_interval_pts_delta_max_us,
+                status.stream_info.u32MeanQp,
                 frame_count,
                 (unsigned long long)total_bytes,
                 (unsigned long long)last_valid_pts,
@@ -411,6 +440,9 @@ void stream_thread(void *arg)
             health_interval_start_ms = now_ms;
             health_interval_frames = 0;
             health_interval_bytes = 0;
+            health_interval_max_frame_bytes = 0;
+            health_interval_pts_delta_min_us = 0;
+            health_interval_pts_delta_max_us = 0;
         }
 
         /* STREAM_EXPORT_LOCAL_LOG 下采集线程可能持续满速运行；主动让出调度，保证 Ctrl+C 信号路径及时执行。 */

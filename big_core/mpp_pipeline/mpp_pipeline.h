@@ -34,7 +34,7 @@
 #define ENC_WIDTH    1920
 #define ENC_HEIGHT   1080
 #define ENC_BITRATE  4000        /* kbps */
-#define SRC_FPS      30          /* VENC 通道输入帧率参数；当前 GC2093/VICAP 实际输入约 30fps */
+#define SRC_FPS      15          /* VENC 通道输入帧率参数；与 VICAP 主通道请求输出保持一致 */
 #define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
 #define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */
 
@@ -92,6 +92,7 @@
 /* VENC 码流线程配置 */
 #define VENC_MAX_PACKS                 MPP_MAX_STREAM_PACKS
 #define VENC_GET_STREAM_TIMEOUT_MS     200
+#define VENC_HEALTH_INTERVAL_MS        5000ULL
 #define AI_FRAME_DUMP_TIMEOUT_MS       50
 
 /* RT-Thread 线程配置: 数值越小优先级越高 */

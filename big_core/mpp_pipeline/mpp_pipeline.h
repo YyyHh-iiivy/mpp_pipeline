@@ -42,9 +42,14 @@
 #define AI_MOTION_WAIT_SLICE_MS 10 /* 取帧前等待切片，保证退出响应 */
 #define AI_HEALTH_INTERVAL_MS 5000ULL
 
-/* AI/VICAP 单变量诊断开关：默认恢复低清旁路与运动检测。 */
+/* AI/VICAP 通道诊断开关：默认配置低清 VB pool 和 VICAP 通道2。 */
 #ifndef AI_BRANCH_ENABLE
 #define AI_BRANCH_ENABLE 1
+#endif
+
+/* AI 用户态帧生命周期开关：不影响 AI VB pool 和 VICAP 通道配置。 */
+#ifndef AI_MOTION_THREAD_ENABLE
+#define AI_MOTION_THREAD_ENABLE 1
 #endif
 
 /* VENC 2D OSD 单变量 A/B 开关：默认恢复安全的硬件 OSD buffer 路径。 */

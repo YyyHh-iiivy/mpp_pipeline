@@ -3,7 +3,8 @@
  *
  * 单进程多线程验证硬件管线:
  *   Sensor(GC2093) -> VICAP(1080P,NV12) -> [sys_bind] -> VENC(H.265,CBR,15fps)
- *   AI_BRANCH_ENABLE=1 时才增加 VICAP(640x480,NV12-Y) -> AI motion thread
+ *   AI_BRANCH_ENABLE=1 时增加 VICAP(640x480,NV12-Y) 低清旁路
+ *   AI_MOTION_THREAD_ENABLE=1 时启动 AI motion thread
  *   采集线程: 打印 "Get NALU, Size: xxxx bytes"
  *
  * 验收标准: 15fps 持续打印 NALU 大小, 10 分钟不死机
@@ -38,7 +39,9 @@ int main(void)
     printf("========================================\n");
     printf("  K230 MPP pipeline test\n");
     printf("========================================\n\n");
-    LOG("[diag] ai_branch=%u", (k_u32)AI_BRANCH_ENABLE);
+    LOG("[diag] ai_branch=%u ai_motion_thread=%u",
+        (k_u32)AI_BRANCH_ENABLE,
+        (k_u32)AI_MOTION_THREAD_ENABLE);
 
 #if VENC_OSD_ENABLE
     LOG("[diag] experiment=ai_osd_restore venc_osd=1 runtime_buffer_writes=1");
@@ -82,7 +85,7 @@ int main(void)
     // ret = stream_export_init(STREAM_EXPORT_LOCAL_LOG);
     if (ret) goto cleanup;
 
-#if AI_BRANCH_ENABLE
+#if AI_BRANCH_ENABLE && AI_MOTION_THREAD_ENABLE
     ret = ai_motion_thread_start();
     if (ret) goto cleanup;
 #endif

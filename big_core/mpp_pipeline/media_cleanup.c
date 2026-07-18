@@ -12,7 +12,7 @@ void pipeline_cleanup(void)
 
     LOG("Cleanup started");
     LOG("Cleanup flow: producer-stop-before-stream-stop");
-#if AI_BRANCH_ENABLE
+#if AI_BRANCH_ENABLE && AI_MOTION_THREAD_ENABLE
     ai_motion_thread_stop();
 #endif
 

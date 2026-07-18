@@ -18,6 +18,9 @@ require_pattern "$sconscript" \
     "'AI_BRANCH_ENABLE'" \
     "module SConscript must accept an AI_BRANCH_ENABLE variant override"
 require_pattern "$sconscript" \
+    "'AI_MOTION_THREAD_ENABLE'" \
+    "module SConscript must accept an AI_MOTION_THREAD_ENABLE variant override"
+require_pattern "$sconscript" \
     "'VENC_OSD_ENABLE'" \
     "module SConscript must accept a VENC_OSD_ENABLE variant override"
 require_pattern "$sconscript" \

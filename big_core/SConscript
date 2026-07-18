@@ -5,10 +5,11 @@ import glob
 cwd = GetCurrentDir()
 
 # --- 可复现的单变量 A/B 构建覆盖 ---
-# 用 `scons AI_BRANCH_ENABLE=0` 或 `scons VENC_OSD_ENABLE=0` 生成对照 ELF，
+# 用 `scons AI_BRANCH_ENABLE=0`、`scons AI_MOTION_THREAD_ENABLE=0` 或
+# `scons VENC_OSD_ENABLE=0` 生成对照 ELF，
 # 不修改源码默认宏，也不依赖 CCFLAGS 环境变量是否被 SDK 构建器接收。
 variant_defines = []
-for macro_name in ('AI_BRANCH_ENABLE', 'VENC_OSD_ENABLE'):
+for macro_name in ('AI_BRANCH_ENABLE', 'AI_MOTION_THREAD_ENABLE', 'VENC_OSD_ENABLE'):
     macro_value = ARGUMENTS.get(macro_name)
     if macro_value is not None:
         if macro_value not in ('0', '1'):

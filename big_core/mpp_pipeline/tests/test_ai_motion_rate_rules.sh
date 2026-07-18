@@ -16,75 +16,121 @@ require_pattern() {
     fi
 }
 
+reject_pattern() {
+    file=$1
+    pattern=$2
+    message=$3
+
+    if grep -Eq "$pattern" "$file"; then
+        echo "$message"
+        exit 1
+    fi
+}
+
 require_pattern "$header" \
-    '^[[:space:]]*#define[[:space:]]+AI_MOTION_PROCESS_FPS[[:space:]]+15([[:space:]]|$)' \
-    "AI motion processing FPS must be fixed at 15"
+    '^[[:space:]]*#define[[:space:]]+AI_MOTION_ACQUIRE_FPS[[:space:]]+5([[:space:]]|$)' \
+    "AI motion acquisition FPS must be fixed at 5 for this diagnostic build"
 require_pattern "$header" \
-    '^[[:space:]]*#define[[:space:]]+AI_MOTION_PROCESS_INTERVAL_MS[[:space:]]+66([[:space:]]|$)' \
-    "AI motion processing interval must be 66ms"
+    '^[[:space:]]*#define[[:space:]]+AI_MOTION_ACQUIRE_INTERVAL_MS[[:space:]]+200([[:space:]]|$)' \
+    "AI motion acquisition interval must be 200ms"
+require_pattern "$header" \
+    '^[[:space:]]*#define[[:space:]]+AI_MOTION_WAIT_SLICE_MS[[:space:]]+10([[:space:]]|$)' \
+    "AI motion wait slices must remain bounded at 10ms"
+require_pattern "$header" \
+    '^[[:space:]]*#define[[:space:]]+AI_HEALTH_INTERVAL_MS[[:space:]]+5000ULL([[:space:]]|$)' \
+    "AI health statistics must use a five-second interval"
+reject_pattern "$header" \
+    'AI_MOTION_PROCESS_(FPS|INTERVAL_MS)' \
+    "the obsolete post-dump processing gate must be removed"
+
 require_pattern "$motion_file" \
     'clock_gettime[[:space:]]*\([[:space:]]*CLOCK_MONOTONIC' \
-    "AI motion rate limiting must use a monotonic clock"
+    "AI motion acquisition pacing must use a monotonic clock"
 require_pattern "$motion_file" \
-    'AI_MOTION_PROCESS_INTERVAL_MS' \
-    "AI motion thread must apply the configured processing interval"
+    'static k_bool ai_motion_wait_until_next_acquire[[:space:]]*\(' \
+    "AI motion pacing must be isolated in a pre-acquire wait helper"
 require_pattern "$motion_file" \
-    'motion_adapter_process[[:space:]]*\(' \
-    "AI motion thread must retain the motion adapter call"
-require_pattern "$motion_file" \
-    'dump_count|frame_count' \
-    "AI motion thread must count dumped frames"
-require_pattern "$motion_file" \
-    'processed_count|process_count' \
-    "AI motion thread must count processed frames"
-require_pattern "$motion_file" \
-    'skipped_count|skip_count' \
-    "AI motion thread must count skipped frames"
-require_pattern "$motion_file" \
-    'actual.*fps|fps=.*processed|processed.*fps' \
-    "AI motion thread exit log must report actual processing FPS"
-require_pattern "$motion_file" \
-    'AI motion processing config: fps=%u interval_ms=%u' \
-    "AI motion startup log must expose the processing fingerprint"
+    'static void ai_motion_schedule_next_acquire[[:space:]]*\(' \
+    "AI motion deadline reset must be isolated in a scheduling helper"
 
-thread_body=$(sed -n '/static void ai_motion_thread/,/^}/p' "$motion_file")
-release_line=$(printf '%s\n' "$thread_body" | grep -n 'ai_frame_release(ai_frame_handle)' | head -n1 | cut -d: -f1)
-adapter_line=$(printf '%s\n' "$thread_body" | grep -n 'motion_adapter_process(&frame' | head -n1 | cut -d: -f1)
-if [ -z "$release_line" ] || [ -z "$adapter_line" ] || [ "$release_line" -le "$adapter_line" ]; then
-    echo "every dumped AI frame must be released after the optional motion processing"
+wait_body=$(sed -n '/static k_bool ai_motion_wait_until_next_acquire/,/^}/p' "$motion_file")
+schedule_body=$(sed -n '/static void ai_motion_schedule_next_acquire/,/^}/p' "$motion_file")
+require_pattern "$motion_file" \
+    'AI_MOTION_ACQUIRE_INTERVAL_MS' \
+    "AI motion pacing must apply the configured acquisition interval"
+if ! printf '%s\n' "$wait_body" | grep -q 'AI_MOTION_WAIT_SLICE_MS'; then
+    echo "AI acquisition wait helper must cap sleep to the configured slice"
+    exit 1
+fi
+if printf '%s\n' "$wait_body" | grep -q 'ai_motion_schedule_next_acquire'; then
+    echo "AI acquisition wait helper must not advance the deadline before work completes"
+    exit 1
+fi
+if ! printf '%s\n' "$schedule_body" | grep -Eq '\*next_acquire_ms[[:space:]]*=[[:space:]]*ai_motion_now_ms\(\)[[:space:]]*\+[[:space:]]*'; then
+    echo "AI acquisition deadlines must restart from current time to prevent catch-up bursts"
+    exit 1
+fi
+if printf '%s\n' "$schedule_body" | grep -Eq '\*next_acquire_ms[[:space:]]*\+='; then
+    echo "AI acquisition pacing must not accumulate overdue deadlines"
     exit 1
 fi
 
-before_release=$(printf '%s\n' "$thread_body" | awk '/dump_count\+\+|frame_count\+\+/{ started=1 } started && /ai_frame_release\(ai_frame_handle\)/{ exit } started { print }')
-if printf '%s\n' "$before_release" | grep -Eq 'rt_thread_mdelay'; then
+thread_body=$(sed -n '/static void ai_motion_thread/,/^}/p' "$motion_file")
+wait_line=$(printf '%s\n' "$thread_body" | grep -n 'ai_motion_wait_until_next_acquire' | head -n1 | cut -d: -f1)
+get_line=$(printf '%s\n' "$thread_body" | grep -n 'ai_frame_try_get(&frame' | head -n1 | cut -d: -f1)
+adapter_line=$(printf '%s\n' "$thread_body" | grep -n 'motion_adapter_process(&frame' | head -n1 | cut -d: -f1)
+release_line=$(printf '%s\n' "$thread_body" | grep -n 'ai_frame_release(ai_frame_handle)' | head -n1 | cut -d: -f1)
+
+if [ -z "$wait_line" ] || [ -z "$get_line" ] || [ "$wait_line" -ge "$get_line" ]; then
+    echo "AI acquisition wait must happen before ai_frame_try_get"
+    exit 1
+fi
+if [ -z "$adapter_line" ] || [ -z "$release_line" ] || \
+   [ "$adapter_line" -le "$get_line" ] || [ "$release_line" -le "$adapter_line" ]; then
+    echo "every acquired AI frame must be processed and then released"
+    exit 1
+fi
+schedule_after_release=$(printf '%s\n' "$thread_body" | awk '
+    /ai_frame_release\(ai_frame_handle\)/ { released=1; next }
+    released && /ai_motion_schedule_next_acquire\(&next_acquire_ms\)/ { print; exit }
+')
+if [ -z "$schedule_after_release" ]; then
+    echo "AI acquisition deadline must restart after every acquired frame is released"
+    exit 1
+fi
+schedule_calls=$(printf '%s\n' "$thread_body" | grep -c 'ai_motion_schedule_next_acquire(&next_acquire_ms)' || true)
+if [ "$schedule_calls" -ne 2 ]; then
+    echo "AI motion thread must reschedule after failed dumps and successful releases only"
+    exit 1
+fi
+
+held_region=$(printf '%s\n' "$thread_body" | awk '
+    /ai_frame_try_get\(&frame/ { holding=1 }
+    holding && /ai_frame_release\(ai_frame_handle\)/ { exit }
+    holding { print }
+')
+if printf '%s\n' "$held_region" | grep -q 'rt_thread_mdelay'; then
     echo "AI motion thread must not delay while holding an AI frame"
     exit 1
 fi
 
-if ! printf '%s\n' "$thread_body" | grep -Eq 'if[[:space:]]*\([^)]*(process|due|interval)[^)]*\)[[:space:]]*\{'; then
-    echo "AI motion algorithm call must be guarded by a processing-period check"
+adapter_calls=$(printf '%s\n' "$thread_body" | grep -c 'motion_adapter_process(&frame' || true)
+if [ "$adapter_calls" -ne 1 ]; then
+    echo "AI motion thread must process each acquired frame through one adapter call"
     exit 1
 fi
+reject_pattern "$motion_file" \
+    'process_frame|skipped_count[[:space:]]*\+\+' \
+    "post-dump frame skipping must be removed"
 
-process_branch=$(printf '%s\n' "$thread_body" | awk '
-    /if[[:space:]]*\(process_frame\)/ { inside=1 }
-    inside { print }
-    inside && /}[[:space:]]*else[[:space:]]*{/ { exit }
-')
-if ! printf '%s\n' "$process_branch" | grep -q 'motion_adapter_process(&frame'; then
-    echo "motion_adapter_process must remain inside the process-frame branch"
-    exit 1
-fi
+require_pattern "$motion_file" \
+    '\[health:ai\].*dump_fps=.*process_fps=.*dump_ok=.*dump_fail=.*release_fail=.*last_frame_age_ms=' \
+    "AI health log must expose acquisition, processing, failure, and freshness fields"
+require_pattern "$motion_file" \
+    'actual_dump_fps=.*actual_process_fps=' \
+    "AI motion exit log must report actual dump and processing FPS"
+require_pattern "$motion_file" \
+    'AI motion acquire config: dump_fps=%u process_fps=%u interval_ms=%u wait_slice_ms=%u' \
+    "AI motion startup log must expose the acquisition fingerprint"
 
-skip_branch=$(printf '%s\n' "$thread_body" | awk '
-    /}[[:space:]]*else[[:space:]]*{/ { inside=1 }
-    inside { print }
-    inside && /skipped_count\+\+/ { seen_skip=1 }
-    seen_skip && /^        }/ { print; exit }
-')
-if printf '%s\n' "$skip_branch" | grep -q 'motion_adapter_process(&frame'; then
-    echo "skipped AI frames must not call motion_adapter_process"
-    exit 1
-fi
-
-echo "AI motion processing rate rules passed"
+echo "AI motion acquisition rate rules passed"

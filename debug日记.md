@@ -118,6 +118,14 @@ RTT_EXEC_PATH="/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64
 5. 上板运行 10 分钟并制造至少 20 次大面积画面变化，只保存完整大小核日志。若不再出现 `[stall:venc]`，则 VENC 2D/OSD 链路是停产触发条件；若仍出现 `pending=0、cur_packs=0、pic_cnt=0`，则排除整个 OSD/2D 子系统，下一版采集 `/proc/umap/vicap` 和 `/proc/umap/venc` 区分主 VICAP 输出与 VENC 输入队列。
 6. 本实验版不会显示 motion detected 画面标记；快照 `params=0/0/0` 仍是独立问题，本轮不修改。
 
+### 2026-07-18：no-OSD仍停流与AI取帧5fps诊断
+
+1. 用户使用 `experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0` 的AI-on/no-OSD版本复测，确认未进入VENC 2D attach、OSD VB或运行期buffer更新路径。
+2. 大核正常输出约5秒后停在 `last_seq=88`，随后 `zero_pack` 从 `elapsed_ms=611` 持续到至少 `22531ms`；全程 `pending=0、cur_packs=0、pic_cnt=0、current_pts=0`。小核已完成 `last_read_seq=last_read_done_seq=88` 后同步进入FIFO idle，因此整个VENC 2D/OSD子系统已从本次停流触发条件中排除。
+3. 停流期间AI线程仍产生event 2、3；退出时29.1秒内 `dump_frames=843`、`processed_frames=388`，可确认旧门控只把算法限制到约13.8fps，而 `dump + mmap + release` 仍接近29fps。
+4. 当前新增诊断档把单调时钟门控移动到 `ai_frame_try_get()` 前，以 `AI_MOTION_ACQUIRE_FPS=5`、`AI_MOTION_ACQUIRE_INTERVAL_MS=200` 限制用户态完整帧生命周期；成功dump的帧全部处理并立即释放，等待期间不持帧，迟到后不连续补dump。
+5. 该修改只验证“高频dump/mmap/release是否触发共享资源竞争”，不能证明VICAP通道2的硬件输出频率已经降低。若5fps仍停流，下一轮依次拆分“保留通道但不启动线程、dump/release、dump+mmap、完整算法”。
+
 ### 2026-07-18：AI-off 稳定基线与1500kbps码率实验
 
 1. 正确使用同一轮大核打印的 `phy_addr=0x1158c000` 后，大小核 DATAFIFO 恢复正常；此前小核打开旧地址 `0x11833000` 导致 `last_read_seq=0`，不是 AI-off 造成无视频。大核重启后必须重新复制地址，不能沿用旧值。
@@ -153,7 +161,8 @@ RTT_EXEC_PATH="/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64
 | 已排除 | 客户端断开必然是首发根因 | 已观察到 VENC 先停产、UDP 后满、播放器随后卡顿/断开 | 客户端断开通常是停流结果；仍需按具体日志顺序判断 |
 | 已排除 | 固定 `clock_drift_ms` 偏移等于延迟持续增长 | 队列恢复后 drift 可保持近似常量 | 应看 drift 的斜率和 outq，而非单个绝对值 |
 | 已排除 | 只移除运行期 VENC 2D 参数更新即可消除零包 | 固定region、只写OSD buffer的版本仍在seq553后持续零pack | A/B变量升级为完全不attach VENC 2D |
-| 仍待验证 | 整个 VENC 2D/OSD 子系统触发或放大 VENC 零包 | 旧版停顿时2D已attach且曾更新OSD buffer，尚无完全禁用版本板端结果 | 使用`noosd_ab`连续10分钟并制造至少20次大面积变化 |
+| 已排除 | 整个 VENC 2D/OSD 子系统是本次零包的必要触发条件 | `noosd_ab`未attach 2D、未申请或写OSD buffer，仍在seq88后持续零包超过22秒 | 后续AI/VICAP实验继续保持no-OSD，避免重新混入该变量 |
+| 仍待验证 | 约29fps的AI dump/mmap/release触发或放大主通道停流 | no-OSD停流期间AI仍持续取帧；算法已降频但dump总数仍接近29fps | 取帧前门控到5fps，观察VENC能否连续运行10分钟 |
 | 仍待验证 | PTS 重锁后的新门控可在 1s 内恢复低延迟 | 源码顺序和自然 IDR 逻辑已测试，尚无板端重锁日志 | 需观察规定日志顺序和恢复后 outq/播放延迟 |
 | 仍待验证 | 1500kbps可避免关键帧打满UDP发送队列 | 当前4000kbps曾产生472569字节关键帧；新参数仅通过主机规则测试 | 需在大面积运动下观察`max_frame_bytes/outq/EAGAIN`和播放延迟 |
 | 仍待验证 | 若移除运行期 2D 参数后仍零包，问题在 VICAP/VENC 内部状态 | 当前没有停顿时 VICAP/VENC 状态探针 | 下一步才增加状态探针，不提前修改恢复策略 |
@@ -164,6 +173,7 @@ RTT_EXEC_PATH="/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64
 
 - 大核分支：`关闭ai线程，单变量验证画面问题`；主动 IDR 宏为0，自然 `GOP=8`，默认码率 `1500kbps`。
 - 大核 AI：默认 `AI_BRANCH_ENABLE=1`，保留 `-DAI_BRANCH_ENABLE=0` 对照构建。
+- AI用户态诊断频率：`AI_MOTION_ACQUIRE_FPS=5`、`AI_MOTION_ACQUIRE_INTERVAL_MS=200`，每个成功dump帧均处理并释放。
 - 大核 OSD：默认 `VENC_OSD_ENABLE=1`，保留 `-DVENC_OSD_ENABLE=0` no-OSD 对照构建。
 - 大核低延迟队列：`OUTPUT_BUF_CNT=3`、`NALU_IPC_PENDING_MAX=2`、`NALU_IPC_FIFO_ENTRIES=3`。
 - 小核唯一维护目录：`/home/ubuntu/workspace/small_core`。

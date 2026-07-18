@@ -37,8 +37,10 @@
 #define SRC_FPS      15          /* VENC 通道输入帧率参数；与 VICAP 主通道请求输出保持一致 */
 #define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
 #define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */
-#define AI_MOTION_PROCESS_FPS 15 /* 用户态运动算法处理频率；独立于 AI 通道 dump 频率 */
-#define AI_MOTION_PROCESS_INTERVAL_MS 66 /* 15fps 的最小算法处理间隔 */
+#define AI_MOTION_ACQUIRE_FPS 5  /* AI dump 与运动算法的诊断频率 */
+#define AI_MOTION_ACQUIRE_INTERVAL_MS 200 /* 5fps 的最小取帧间隔 */
+#define AI_MOTION_WAIT_SLICE_MS 10 /* 取帧前等待切片，保证退出响应 */
+#define AI_HEALTH_INTERVAL_MS 5000ULL
 
 /* AI/VICAP 单变量诊断开关：默认恢复低清旁路与运动检测。 */
 #ifndef AI_BRANCH_ENABLE

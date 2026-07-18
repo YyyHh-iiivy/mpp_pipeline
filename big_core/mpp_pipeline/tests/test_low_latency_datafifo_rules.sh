@@ -102,8 +102,47 @@ require_pattern "$venc_file" 'stream_freshness_observe' \
     "stream thread must evaluate source-frame freshness"
 require_pattern "$venc_file" 'stale_drop' \
     "stream thread must report stale-frame drops"
+require_pattern "$venc_file" 'VENC empty stream:' \
+    "stream thread must diagnose successful get_stream calls that return zero packs"
 require_pattern "$vb_file" '3\*4MB \+ 3\*1MB' \
     "VB memory comment must document the reduced VENC stream pool size"
+
+release_progress_order=$(awk '
+    /while \(g_stream_running\)/ { in_loop = 1 }
+    in_loop && /stream_export_flush\(\)/ && flush_line == 0 { flush_line = NR }
+    in_loop && /kd_mpi_venc_query_status/ && query_line == 0 { query_line = NR }
+    END {
+        if (flush_line > 0 && query_line > 0 && flush_line < query_line) {
+            print "ok";
+        } else {
+            print "bad";
+        }
+    }
+' "$venc_file")
+if [ "$release_progress_order" != "ok" ]; then
+    echo "stream thread must drain DATAFIFO releases before querying VENC"
+    exit 1
+fi
+
+empty_stream_order=$(awk '
+    /kd_mpi_venc_get_stream/ { get_line = NR }
+    get_line > 0 && NR > get_line && /if \(output\.pack_cnt == 0\)/ && empty_line == 0 {
+        empty_line = NR
+    }
+    /stream_export_submit_venc_stream/ && submit_line == 0 { submit_line = NR }
+    END {
+        if (get_line > 0 && empty_line > get_line &&
+            submit_line > empty_line) {
+            print "ok";
+        } else {
+            print "bad";
+        }
+    }
+' "$venc_file")
+if [ "$empty_stream_order" != "ok" ]; then
+    echo "stream thread must reject zero-pack streams after get_stream and before export"
+    exit 1
+fi
 
 pipeline_order=$(awk '
     /stream_export_init\(STREAM_EXPORT_DATAFIFO\)/ { export_line = NR }

@@ -156,6 +156,8 @@ void stream_thread(void *arg)
     k_u32 interval_frames = 0;                  // 区间帧计数器，用于计算区间内的帧率
     k_u32 query_fail_count = 0;                 // 查询失败计数，用于限制日志频率
     k_u32 get_fail_count = 0;                   // get_stream失败计数，用于限制日志频率
+    k_u32 flush_fail_count = 0;                 // 独立release drain失败计数
+    k_u32 empty_stream_count = 0;               // get_stream成功但零pack的连续次数
     k_u32 submit_fail_count = 0;
     k_s64 source_drift_ms = 0;
     stream_freshness_tracker freshness;
@@ -169,6 +171,18 @@ void stream_thread(void *arg)
     while (g_stream_running) {                  // cleanup 明确停止前持续 drain VENC
         k_venc_chn_status status;               // VENC通道状态结构体
         k_bool release_by_caller = K_TRUE;       // 导出层返回的释放责任
+
+        /*
+         * READ_DONE回调必须独立于下一帧有效码流推进。否则VENC暂时返回
+         * 零pack时，最后一个pending流无法释放，会形成永久无流的闭环。
+         */
+        ret = stream_export_flush();
+        if (ret) {
+            if ((flush_fail_count++ % 25) == 0)
+                LOG("stream_export_flush failed! ret=0x%x", ret);
+        } else {
+            flush_fail_count = 0;
+        }
 
         /* 查询当前有多少个 pack */
         ret = kd_mpi_venc_query_status(chn, &status);  // 查询VENC通道的状态
@@ -196,16 +210,27 @@ void stream_thread(void *arg)
         if (ret) {                              // 检查获取码流是否成功
             if (!g_stream_running)               // 如果 cleanup 要求退出
                 break;                           // 跳出循环结束线程
-            {
-                k_s32 flush_ret = stream_export_flush();
-                if (flush_ret && ((get_fail_count % 25) == 0))
-                    LOG("stream_export_flush failed! ret=0x%x", flush_ret);
-            }
             if ((get_fail_count++ % 25) == 0)
                 LOG("kd_mpi_venc_get_stream timeout/no stream ret=0x%x", ret);
             continue;                            // 暂时无流时继续等待
         }
         get_fail_count = 0;
+
+        if (output.pack_cnt == 0) {
+            empty_stream_count++;
+            if (empty_stream_count == 1 ||
+                (empty_stream_count % 25U) == 0) {
+                LOG("VENC empty stream: count=%u status_cur_packs=%u release_pic_pts=%llu end_of_stream=%u pending=%u",
+                    empty_stream_count,
+                    status.cur_packs,
+                    (unsigned long long)status.release_pic_pts,
+                    (unsigned int)status.end_of_stream,
+                    stream_export_get_pending_count());
+            }
+            rt_thread_mdelay(5);
+            continue;
+        }
+        empty_stream_count = 0;
 
         if (!g_stream_running) {
             ret = kd_mpi_venc_release_stream(chn, &output);

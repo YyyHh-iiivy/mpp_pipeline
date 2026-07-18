@@ -40,7 +40,9 @@ int main(void)
     printf("========================================\n\n");
     LOG("[diag] ai_branch=%u", (k_u32)AI_BRANCH_ENABLE);
 
-#if !VENC_OSD_ENABLE
+#if VENC_OSD_ENABLE
+    LOG("[diag] experiment=ai_osd_restore venc_osd=1 runtime_buffer_writes=1");
+#else
     LOG("[diag] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0");
 #endif
 

@@ -33,11 +33,11 @@ reject_text()
 }
 
 require_pattern "$header" \
-    '^[[:space:]]*#define[[:space:]]+VENC_OSD_ENABLE[[:space:]]+0([[:space:]]|$)' \
-    'the no-OSD A/B build must default VENC_OSD_ENABLE to 0'
+    '^[[:space:]]*#ifndef[[:space:]]+VENC_OSD_ENABLE' \
+    'VENC_OSD_ENABLE must remain overridable for the no-OSD A/B build'
 require_pattern "$pipeline_file" \
-    '\[diag\] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0' \
-    'the no-OSD build fingerprint is missing'
+    'experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0' \
+    'the no-OSD A/B fingerprint must remain available when explicitly overridden'
 require_pattern "$motion_file" \
     '\[event:motion\].*osd_enabled=%u.*snapshot_ret=' \
     'motion events must report osd_enabled while preserving snapshot results'
@@ -73,4 +73,4 @@ if [ -z "$snapshot_block" ] || printf '%s\n' "$snapshot_block" | grep -q 'VENC_O
     exit 1
 fi
 
-echo 'no-OSD A/B experiment rules passed'
+echo 'no-OSD A/B override rules passed'

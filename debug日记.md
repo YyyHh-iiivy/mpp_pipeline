@@ -6,17 +6,25 @@
 
 本日记用于保存可复核的问题、证据、实验变量、结论和修正记录。事实必须能由源码、构建结果或板端日志验证；推测一律标为“假设”。后续结论变化时不删除原实验，而是在原条目后补充修正说明。
 
-当前目标：保持 K230 大核 `VICAP -> VENC -> DATAFIFO` 硬件链路和小核 RTSP/RTP 推流，在 AI/VICAP 旁路关闭的诊断基线上优先保证低延迟与大面积运动稳定性，并使异常后尽快从干净的 H.265 参考链恢复。
+当前目标：在约 300ms 的低延迟基线上按“先 AI、后 OSD”恢复旁路运动检测和硬件 OSD；主 `VICAP -> VENC -> DATAFIFO` 链路、RTP 参数及快照协议保持不变。
 
 固定约束：
 
 - 主视频保持 1920×1080、CBR 和硬件 MPP bind；不引入 V4L2、ffmpeg、gstreamer、CPU 视频帧拷贝或软件 OSD。
 - `SRC_FPS=15`、`DST_FPS=15`、`VICAP_OUTPUT_FPS=15`、`ENC_BITRATE=1500kbps`、`VENC_GOP=8`。
-- `AI_BRANCH_ENABLE=0`，不创建 AI VB pool、不配置 VICAP 通道2、不启动运动线程。
+- 默认 `AI_BRANCH_ENABLE=1`，创建 AI VB pool、配置 VICAP 通道2并启动运动线程；仍可显式传入 `-DAI_BRANCH_ENABLE=0` 生成 AI-off 对照 ELF。
 - 主动 IDR 默认关闭；不因运动事件或 PTS 重锁调用主动 IDR。
 - 不扩大 DATAFIFO、VENC 或 UDP 缓冲来掩盖积压，不加入 VENC 自动重启。
 - 快照继续使用 DATAFIFO `reserved` bit0；不修改跨核协议及快照标志语义。
-- 最终比赛版仍要求硬件 OSD；当前 `noosd_ab` 仅为根因定位实验，完全不 attach VENC 2D、不申请或更新 OSD buffer，不能作为最终比赛版本。
+- 默认 `VENC_OSD_ENABLE=1`，使用启动前一次性 region 配置、运行期 buffer 更新和 cache flush 的安全实现；仍可显式传入 `-DVENC_OSD_ENABLE=0` 复现 no-OSD A/B 对照。
+
+### 2026-07-18：分阶段恢复 AI、硬件 OSD 与运动功能
+
+1. 阶段一代码基线已恢复 `AI_BRANCH_ENABLE=1`：VB pool index 2、VICAP `CHN_ID_2` 的 `640x480` 旁路、`ai_motion_thread` 和 `motion_adapter` 均重新进入默认 ELF；主视频仍为 1080p/15fps/1500kbps/GOP=8。
+2. 阶段二代码基线已恢复 `VENC_OSD_ENABLE=1`：`osd_init()` 只在 VENC 启动前 attach 并配置一次 region，运行期只复制/清零 ARGB buffer 并 flush cache，不调用运行期 `kd_mpi_venc_set_2d_osd_param()`。
+3. 默认启动指纹为 `[diag] ai_branch=1`、`[diag] experiment=ai_osd_restore venc_osd=1 runtime_buffer_writes=1`；运动事件应同时带 `osd_enabled=1`。AI-off/no-OSD 诊断指纹仍由显式宏覆盖保留。
+4. 主机侧源码规则、运动消抖、OSD buffer、DATAFIFO 和小核构建规则已执行；当前环境未连接 K230，阶段一的 10 分钟与阶段二的 20 次事件/10 分钟板端验收仍待现场完成。
+5. 快照继续保留现有 DATAFIFO 行为；若板端仍记录 `params=0/0/0`，单独记为快照参数集问题，不回退 AI/OSD 视频链路。
 
 ## 2. 调试时间线
 
@@ -128,8 +136,8 @@
 ### 代码与参数基线
 
 - 大核分支：`关闭ai线程，单变量验证画面问题`；主动 IDR 宏为0，自然 `GOP=8`，默认码率 `1500kbps`。
-- 大核 AI：`AI_BRANCH_ENABLE=0`，只保留主 VICAP→VENC 链路。
-- 大核 OSD：`VENC_OSD_ENABLE=0`，整个 VENC 2D attach、OSD VB/MMZ 和运行期 buffer 更新路径均不进入；启用态源码保留。
+- 大核 AI：默认 `AI_BRANCH_ENABLE=1`，保留 `-DAI_BRANCH_ENABLE=0` 对照构建。
+- 大核 OSD：默认 `VENC_OSD_ENABLE=1`，保留 `-DVENC_OSD_ENABLE=0` no-OSD 对照构建。
 - 大核低延迟队列：`OUTPUT_BUF_CNT=3`、`NALU_IPC_PENDING_MAX=2`、`NALU_IPC_FIFO_ENTRIES=3`。
 - 小核唯一维护目录：`/home/ubuntu/workspace/small_core`。
 - 小核纳入 Git 的产物：`small_core/user/rtsp_sender_withsd_compactdiag`。
@@ -173,10 +181,11 @@ ffplay -rtsp_transport udp -max_delay 0 -reorder_queue_size 0 \
 ### 关键日志指纹
 
 - 初始化：`VB init OK`、`VENC chn=0 create OK`、`VICAP init OK`、`VI->VENC bind OK`。
-- AI-off：启动必须出现 `[diag] ai_branch=0`，运行期不得出现 AI motion thread 或 `[event:motion]`。
+- 默认恢复版：启动必须出现 `[diag] ai_branch=1`、`experiment=ai_osd_restore`，并看到 `VENC 2D OSD init OK`；运动事件应出现 `osd_enabled=1`。
+- AI-off/no-OSD 对照：仅在显式覆盖宏时检查 `[diag] ai_branch=0` 或 `experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0`，并确认对应分支无旁路/OSD副作用。
 - 码率：启动必须出现 `bitrate_kbps=1500`；`[health:venc]` 实测目标为约1200–1800kbps。
 - compact版本：大小核均出现`[diag] compact_diag normal=60s stall=500ms anomaly=1s`；正常期每60秒出现`[health:venc]/[health:ipc]/[health:small]`。
-- noosd A/B：启动必须出现`[diag] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0`；不得出现`VENC 2D OSD init OK`、`[osd:buffer]`或任何2D attach日志。
+- OSD恢复版：启动必须出现`[diag] experiment=ai_osd_restore venc_osd=1 runtime_buffer_writes=1`和`VENC 2D OSD init OK`；运动事件、自动隐藏和重复触发需观察`[osd:buffer]`。
 - 跨核：健康摘要中pending通常为0或短时1，`last_read_seq`应追上`last_read_done_seq`。
 - 重锁恢复：`[rtp:rebase]` -> `PTS rebase, waiting random access` -> `sent cached VPS/SPS/PPS` -> `random access start`。
 - 网络：`outq_before/outq_after` 不应持续贴近 `sndbuf_actual`，不应重复 `send queue busy`。

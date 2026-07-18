@@ -38,14 +38,14 @@
 #define DST_FPS      15          /* VENC 目标输出帧率参数；低延迟 RTSP 档使用 15fps */
 #define VICAP_OUTPUT_FPS 15      /* VICAP 通道输出帧率；0 表示使用 sensor 原始帧率 */
 
-/* AI/VICAP 单变量诊断开关：默认只保留主视频编码链路。 */
+/* AI/VICAP 单变量诊断开关：默认恢复低清旁路与运动检测。 */
 #ifndef AI_BRANCH_ENABLE
-#define AI_BRANCH_ENABLE 0
+#define AI_BRANCH_ENABLE 1
 #endif
 
-/* VENC 2D OSD 单变量 A/B 开关：本实验版完全不进入 2D 或 OSD buffer 路径。 */
+/* VENC 2D OSD 单变量 A/B 开关：默认恢复安全的硬件 OSD buffer 路径。 */
 #ifndef VENC_OSD_ENABLE
-#define VENC_OSD_ENABLE 0
+#define VENC_OSD_ENABLE 1
 #endif
 
 #ifndef VENC_FORCE_IDR_ENABLE

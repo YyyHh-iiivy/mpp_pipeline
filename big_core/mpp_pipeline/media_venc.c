@@ -172,6 +172,9 @@ void stream_thread(void *arg)
         k_venc_chn_status status;               // VENC通道状态结构体
         k_bool release_by_caller = K_TRUE;       // 导出层返回的释放责任
 
+        /* 所有运行期VENC 2D API与query/get/release在本线程串行执行。 */
+        (void)osd_poll_auto_hide();
+
         /*
          * READ_DONE回调必须独立于下一帧有效码流推进。否则VENC暂时返回
          * 零pack时，最后一个pending流无法释放，会形成永久无流的闭环。

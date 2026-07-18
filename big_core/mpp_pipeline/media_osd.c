@@ -6,8 +6,8 @@
  *
  * 这里不走 VO OSD，而是把 ARGB8888 图片放进 VB/MMZ buffer，
  * 再通过 VENC 2D OSD 参数叠加到编码通道 VENC_CHN 上。AI 运动检测
- * 线程释放 AI frame 后调用 osd_set_motion_visible()，并通过
- * osd_poll_auto_hide() 轮询自动隐藏 deadline。
+ * 线程释放 AI frame 后只通过 osd_set_motion_visible() 提交显隐请求；
+ * stream 线程通过 osd_poll_auto_hide() 串行执行运行期 VENC 2D API。
  */
 #define OSD_REGION_INDEX 0
 #define OSD_START_X      32
@@ -15,6 +15,7 @@
 #define OSD_BUF_SIZE     ALIGN_UP(MOTION_DETECTED_OSD_SIZE, 0x1000)
 
 #define OSD_HIDE_DEADLINE_GRACE_MS  20
+#define OSD_APPLY_RETRY_MS          100
 
 /* OSD 图片 buffer 和 VENC 2D 参数状态。 */
 static k_bool g_osd_inited = K_FALSE;
@@ -24,8 +25,12 @@ static k_u64 g_osd_phys_addr;
 static void *g_osd_virt_addr;
 static k_venc_2d_osd_attr g_osd_attr;
 
-/* 非 0 表示当前有一次自动隐藏等待执行。 */
+/* AI线程写目标状态，stream线程写已应用状态。 */
 static k_u64 g_osd_hide_deadline_ms;
+static k_u64 g_osd_retry_after_ms;
+static k_u64 g_osd_request_generation;
+static k_u32 g_osd_desired_alpha;
+static k_u32 g_osd_applied_alpha;
 
 /* 获取单调时间，避免系统时间调整影响 OSD 自动隐藏。 */
 static k_u64 osd_now_ms(void)
@@ -34,19 +39,6 @@ static k_u64 osd_now_ms(void)
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (k_u64)ts.tv_sec * 1000ULL + (k_u64)ts.tv_nsec / 1000000ULL;
-}
-
-static k_s32 osd_set_alpha(k_u32 alpha)
-{
-    k_s32 ret;
-
-    /* 只修改全局透明度，图片 buffer 本身不变。 */
-    g_osd_attr.osd_alpha = alpha;
-    ret = kd_mpi_venc_set_2d_osd_param(VENC_CHN, OSD_REGION_INDEX, &g_osd_attr);
-    if (ret)
-        LOG("kd_mpi_venc_set_2d_osd_param alpha=%u failed! ret=0x%x", alpha, ret);
-
-    return ret;
 }
 
 static void osd_release_buffer(void)
@@ -165,6 +157,11 @@ k_s32 osd_init(void)
         return ret;
     }
 
+    g_osd_hide_deadline_ms = 0;
+    g_osd_retry_after_ms = 0;
+    g_osd_request_generation = 0;
+    g_osd_desired_alpha = 0;
+    g_osd_applied_alpha = 0;
     g_osd_inited = K_TRUE;
     LOG("VENC 2D OSD init OK: %ux%u ARGB8888 at (%u,%u), phys=0x%llx",
         (k_u32)MOTION_DETECTED_OSD_WIDTH,
@@ -177,28 +174,24 @@ k_s32 osd_init(void)
 
 k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
 {
-    k_s32 ret;
+    k_bool inited;
+    k_u64 now_ms = osd_now_ms();
     k_u32 target_alpha = visible ? 255 : 0;
 
-    if (!g_osd_inited) {
+    rt_enter_critical();
+    inited = g_osd_inited;
+    if (inited) {
+        g_osd_desired_alpha = target_alpha;
+        g_osd_hide_deadline_ms = (visible && duration_ms > 0) ?
+                                 now_ms + duration_ms : 0;
+        g_osd_retry_after_ms = 0;
+        g_osd_request_generation++;
+    }
+    rt_exit_critical();
+
+    if (!inited) {
         LOG("OSD motion visible=%u requested before osd_init", visible);
         return -1;
-    }
-
-    /*
-     * 幂等/续期保护: AI 线程可能连续请求显示或隐藏 OSD。
-     * 如果 OSD 已经处于目标显隐状态，就不重复下发 VENC 2D 参数，
-     * 只续期自动隐藏 deadline，避免每次请求都调用 set_2d_osd_param()。
-     */
-    g_osd_hide_deadline_ms = 0;
-    if (g_osd_attr.osd_alpha != target_alpha) {
-        ret = osd_set_alpha(target_alpha);
-        if (ret)
-            return ret;
-    }
-
-    if (visible && duration_ms > 0) {
-        g_osd_hide_deadline_ms = osd_now_ms() + duration_ms;
     }
 
     return 0;
@@ -206,24 +199,75 @@ k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
 
 k_s32 osd_poll_auto_hide(void)
 {
-    k_s32 ret = 0;
-    k_u64 now_ms;
+    k_s32 ret;
+    k_bool auto_hide = K_FALSE;
+    k_bool pending_after;
+    k_u32 target_alpha;
+    k_u64 apply_generation;
+    k_u64 apply_start_ms;
+    k_u64 apply_cost_ms;
+    k_u64 now_ms = osd_now_ms();
+    k_venc_2d_osd_attr apply_attr;
 
-    if (g_osd_hide_deadline_ms == 0)
+    /* 临界区只抓取状态；VENC SDK 调用必须在临界区外执行。 */
+    rt_enter_critical();
+    if (!g_osd_inited) {
+        rt_exit_critical();
         return 0;
+    }
 
-    now_ms = osd_now_ms();
-    if (now_ms + OSD_HIDE_DEADLINE_GRACE_MS < g_osd_hide_deadline_ms)
-        return 0;
-
-    g_osd_hide_deadline_ms = 0;
-    if (g_osd_inited) {
-        if (g_osd_attr.osd_alpha != 0) {
-            ret = osd_set_alpha(0);
-            if (!ret)
-                LOG("OSD auto hide alpha=0");
+    if (g_osd_hide_deadline_ms != 0 &&
+        now_ms + OSD_HIDE_DEADLINE_GRACE_MS >= g_osd_hide_deadline_ms) {
+        g_osd_hide_deadline_ms = 0;
+        if (g_osd_desired_alpha != 0) {
+            g_osd_desired_alpha = 0;
+            g_osd_retry_after_ms = 0;
+            g_osd_request_generation++;
+            auto_hide = K_TRUE;
         }
     }
+
+    if (g_osd_desired_alpha == g_osd_applied_alpha ||
+        (g_osd_retry_after_ms != 0 && now_ms < g_osd_retry_after_ms)) {
+        rt_exit_critical();
+        return 0;
+    }
+
+    target_alpha = g_osd_desired_alpha;
+    apply_generation = g_osd_request_generation;
+    apply_attr = g_osd_attr;
+    apply_attr.osd_alpha = target_alpha;
+    rt_exit_critical();
+
+    apply_start_ms = osd_now_ms();
+    ret = kd_mpi_venc_set_2d_osd_param(VENC_CHN,
+                                       OSD_REGION_INDEX,
+                                       &apply_attr);
+    apply_cost_ms = osd_now_ms() - apply_start_ms;
+
+    rt_enter_critical();
+    if (!ret) {
+        /* 硬件实际应用的是本次抓取的alpha；更新期间的新请求仍保持pending。 */
+        g_osd_attr.osd_alpha = target_alpha;
+        g_osd_applied_alpha = target_alpha;
+        g_osd_retry_after_ms = 0;
+    } else if (g_osd_request_generation == apply_generation) {
+        g_osd_retry_after_ms = osd_now_ms() + OSD_APPLY_RETRY_MS;
+    } else {
+        /* SDK调用期间产生了新请求，下一轮立即尝试最新目标。 */
+        g_osd_retry_after_ms = 0;
+    }
+    pending_after = (g_osd_desired_alpha != g_osd_applied_alpha);
+    rt_exit_critical();
+
+    LOG("[osd:apply] generation=%llu alpha=%u cost_ms=%llu ret=0x%x pending_after=%u",
+        (unsigned long long)apply_generation,
+        target_alpha,
+        (unsigned long long)apply_cost_ms,
+        ret,
+        (unsigned int)pending_after);
+    if (auto_hide && !ret)
+        LOG("OSD auto hide alpha=0");
 
     return ret;
 }
@@ -235,7 +279,12 @@ void osd_deinit(void)
     if (!g_osd_inited && !g_osd_2d_attached && g_osd_block == VB_INVALID_HANDLE)
         return;
 
+    rt_enter_critical();
     g_osd_hide_deadline_ms = 0;
+    g_osd_retry_after_ms = 0;
+    g_osd_desired_alpha = 0;
+    g_osd_request_generation++;
+    rt_exit_critical();
 
     if (g_osd_2d_attached) {
         LOG("VENC 2D OSD detach start");
@@ -249,6 +298,7 @@ void osd_deinit(void)
     osd_release_buffer();
     LOG("OSD buffer release done");
     memset(&g_osd_attr, 0, sizeof(g_osd_attr));
+    g_osd_applied_alpha = 0;
     g_osd_inited = K_FALSE;
     LOG("VENC 2D OSD deinit OK");
 }

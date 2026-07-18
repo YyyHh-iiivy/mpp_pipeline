@@ -50,8 +50,6 @@ static void ai_motion_thread(void *arg)
         void *ai_frame_handle = NULL;
         k_s32 release_ret;
 
-        osd_poll_auto_hide();
-
         ret = ai_frame_try_get(&frame, &ai_frame_handle);
         if (ret) {
             if ((timeout_count++ % 100) == 0)

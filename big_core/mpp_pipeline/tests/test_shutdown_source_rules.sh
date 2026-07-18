@@ -55,12 +55,37 @@ if [ "$ai_release_line" -ge "$ai_osd_line" ]; then
     exit 1
 fi
 
-if ! grep -q 'osd_poll_auto_hide();' "$ai_motion_file"; then
-    echo "ai motion thread must poll OSD auto hide"
+if grep -q 'osd_poll_auto_hide();' "$ai_motion_file"; then
+    echo "AI motion thread must not call runtime VENC OSD processing"
+    exit 1
+fi
+
+osd_poll_line=$(printf '%s\n' "$stream_thread_body" | grep -n 'osd_poll_auto_hide();' | head -n1 | cut -d: -f1)
+venc_query_line=$(printf '%s\n' "$stream_thread_body" | grep -n 'kd_mpi_venc_query_status' | head -n1 | cut -d: -f1)
+if [ -z "$osd_poll_line" ] || [ -z "$venc_query_line" ] || \
+   [ "$osd_poll_line" -ge "$venc_query_line" ]; then
+    echo "stream thread must process pending OSD updates before querying VENC"
     exit 1
 fi
 
 osd_file="$root/big_core/mpp_pipeline/media_osd.c"
+osd_request_body=$(sed -n '/k_s32 osd_set_motion_visible/,/^}/p' "$osd_file")
+if printf '%s\n' "$osd_request_body" | grep -q 'kd_mpi_venc_set_2d_osd_param'; then
+    echo "osd_set_motion_visible must queue state only and never call the VENC driver"
+    exit 1
+fi
+if ! grep -q '\[osd:apply\] generation=' "$osd_file"; then
+    echo "runtime OSD apply diagnostics must include generation and result"
+    exit 1
+fi
+if ! grep -q 'g_osd_request_generation' "$osd_file"; then
+    echo "runtime OSD requests must use a generation to preserve concurrent updates"
+    exit 1
+fi
+if ! grep -q 'g_osd_retry_after_ms' "$osd_file"; then
+    echo "failed runtime OSD updates must use bounded retry pacing"
+    exit 1
+fi
 if grep -Eq 'rt_timer_(create|control|start|stop|delete)' "$osd_file"; then
     echo "OSD auto hide must not use RT timer APIs"
     exit 1

@@ -21,6 +21,52 @@ static k_u64 venc_stream_video_pts(const k_venc_stream *stream)
     return 0;
 }
 
+static const char *venc_stall_state(compact_diag_action action)
+{
+    switch (action) {
+    case COMPACT_DIAG_STALL_START:
+        return "start";
+    case COMPACT_DIAG_STALL_ONGOING:
+        return "ongoing";
+    case COMPACT_DIAG_STALL_RECOVERED:
+        return "recovered";
+    default:
+        return "normal";
+    }
+}
+
+static void venc_log_stall(compact_diag_action action,
+                           const char *cause,
+                           k_s32 stall_ret,
+                           k_u64 elapsed_ms,
+                           k_u64 last_seq,
+                           k_u64 last_pts_age_ms,
+                           k_u64 last_pts,
+                           k_u64 current_pts,
+                           k_u32 cur_packs,
+                           k_u32 pic_cnt,
+                           k_u32 pic_bytes,
+                           k_u32 mean_qp,
+                           k_u32 pending)
+{
+    k_u64 pts_gap_us = 0;
+
+    if (action == COMPACT_DIAG_NONE)
+        return;
+    if (current_pts > last_pts && last_pts != 0)
+        pts_gap_us = current_pts - last_pts;
+
+    LOG("[stall:venc] state=%s cause=%s ret=0x%x elapsed_ms=%llu last_seq=%llu last_pts_age_ms=%llu last_pts=%llu current_pts=%llu pts_gap_us=%llu cur_packs=%u pic_cnt=%u pic_bytes=%u mean_qp=%u pending=%u",
+        venc_stall_state(action), cause ? cause : "unknown", stall_ret,
+        (unsigned long long)elapsed_ms,
+        (unsigned long long)last_seq,
+        (unsigned long long)last_pts_age_ms,
+        (unsigned long long)last_pts,
+        (unsigned long long)current_pts,
+        (unsigned long long)pts_gap_us,
+        cur_packs, pic_cnt, pic_bytes, mean_qp, pending);
+}
+
 k_s32 venc_request_idr_once(k_u32 chn, const char *reason)
 {
 #if VENC_FORCE_IDR_ENABLE
@@ -151,26 +197,35 @@ void stream_thread(void *arg)
     k_venc_pack packs[VENC_MAX_PACKS];           // SDK get_stream() 的临时 pack 描述缓冲，不承载码流数据
     k_s32 ret;                                  // 返回值，用于存储API调用结果
     k_u32 frame_count = 0;                      // 总帧计数器，统计接收到的所有非头部帧
-    k_u32 total_bytes = 0;                      // 总字节数计数器
-    time_t start_time, last_log;                // 开始时间戳和上次日志记录时间戳
-    k_u32 interval_frames = 0;                  // 区间帧计数器，用于计算区间内的帧率
-    k_u32 query_fail_count = 0;                 // 查询失败计数，用于限制日志频率
-    k_u32 get_fail_count = 0;                   // get_stream失败计数，用于限制日志频率
+    k_u64 total_bytes = 0;                      // 总字节数计数器
     k_u32 flush_fail_count = 0;                 // 独立release drain失败计数
-    k_u32 empty_stream_count = 0;               // get_stream成功但零pack的连续次数
     k_u32 submit_fail_count = 0;
     k_s64 source_drift_ms = 0;
     stream_freshness_tracker freshness;
+    compact_diag_tracker compact_diag;
+    k_u64 stream_start_ms = venc_now_ms();
+    k_u64 last_valid_stream_ms = stream_start_ms;
+    k_u64 health_interval_start_ms = stream_start_ms;
+    k_u64 last_valid_pts = 0;
+    k_u32 health_interval_frames = 0;
+    k_u32 health_interval_bytes = 0;
+    k_u64 stall_elapsed = 0;
 
     LOG("Stream thread started");               // 记录线程启动日志
-    start_time = last_log = time(NULL);         // 记录开始时间和上次日志时间
+    LOG("[diag] compact_diag normal=60s stall=500ms anomaly=1s");
     memset(&output, 0, sizeof(output));
     output.pack = packs;
     stream_freshness_init(&freshness);
+    compact_diag_tracker_init(&compact_diag, stream_start_ms);
 
     while (g_stream_running) {                  // cleanup 明确停止前持续 drain VENC
         k_venc_chn_status status;               // VENC通道状态结构体
         k_bool release_by_caller = K_TRUE;       // 导出层返回的释放责任
+        compact_diag_action diag_action;
+        k_u64 now_ms;
+        k_u64 video_pts = 0;
+
+        memset(&status, 0, sizeof(status));
 
         /* 在VENC query/get前串行完成固定OSD region的素材buffer更新。 */
         (void)osd_poll_auto_hide();
@@ -190,14 +245,19 @@ void stream_thread(void *arg)
         /* 查询当前有多少个 pack */
         ret = kd_mpi_venc_query_status(chn, &status);  // 查询VENC通道的状态
         if (ret) {                              // 检查查询是否成功
+            now_ms = venc_now_ms();
+            diag_action = compact_diag_observe(&compact_diag, now_ms, 0, &stall_elapsed);
+            venc_log_stall(diag_action, "query_fail", ret, stall_elapsed,
+                           stream_export_get_last_seq(),
+                           now_ms - last_valid_stream_ms,
+                           last_valid_pts, 0,
+                           0, 0, 0, 0,
+                           stream_export_get_pending_count());
             if (!g_stream_running)
                 break;
-            if ((query_fail_count++ % 25) == 0)
-                LOG("kd_mpi_venc_query_status failed! ret=0x%x", ret);  // 记录错误日志
             rt_thread_mdelay(50);               // 休眠50毫秒后重试
             continue;                           // 继续下一轮循环
         }
-        query_fail_count = 0;
 
         memset(packs, 0, sizeof(packs));
         memset(&output, 0, sizeof(output));
@@ -211,29 +271,53 @@ void stream_thread(void *arg)
         /* 有限等待编码完成，保证信号退出和 cleanup 能回收线程 */
         ret = kd_mpi_venc_get_stream(chn, &output, VENC_GET_STREAM_TIMEOUT_MS);
         if (ret) {                              // 检查获取码流是否成功
+            now_ms = venc_now_ms();
+            diag_action = compact_diag_observe(&compact_diag, now_ms, 0, &stall_elapsed);
+            venc_log_stall(diag_action, "get_stream_fail", ret, stall_elapsed,
+                           stream_export_get_last_seq(),
+                           now_ms - last_valid_stream_ms,
+                           last_valid_pts, 0,
+                           status.cur_packs,
+                           status.stream_info.u32PicCnt,
+                           status.stream_info.u32PicBytesNum,
+                           status.stream_info.u32MeanQp,
+                           stream_export_get_pending_count());
             if (!g_stream_running)               // 如果 cleanup 要求退出
                 break;                           // 跳出循环结束线程
-            if ((get_fail_count++ % 25) == 0)
-                LOG("kd_mpi_venc_get_stream timeout/no stream ret=0x%x", ret);
             continue;                            // 暂时无流时继续等待
         }
-        get_fail_count = 0;
 
         if (output.pack_cnt == 0) {
-            empty_stream_count++;
-            if (empty_stream_count == 1 ||
-                (empty_stream_count % 25U) == 0) {
-                LOG("VENC empty stream: count=%u status_cur_packs=%u release_pic_pts=%llu end_of_stream=%u pending=%u",
-                    empty_stream_count,
-                    status.cur_packs,
-                    (unsigned long long)status.release_pic_pts,
-                    (unsigned int)status.end_of_stream,
-                    stream_export_get_pending_count());
-            }
+            now_ms = venc_now_ms();
+            diag_action = compact_diag_observe(&compact_diag, now_ms, 0, &stall_elapsed);
+            venc_log_stall(diag_action, "zero_pack", ret, stall_elapsed,
+                           stream_export_get_last_seq(),
+                           now_ms - last_valid_stream_ms,
+                           last_valid_pts, 0,
+                           status.cur_packs,
+                           status.stream_info.u32PicCnt,
+                           status.stream_info.u32PicBytesNum,
+                           status.stream_info.u32MeanQp,
+                           stream_export_get_pending_count());
             rt_thread_mdelay(5);
             continue;
         }
-        empty_stream_count = 0;
+
+        now_ms = venc_now_ms();
+        video_pts = venc_stream_video_pts(&output);
+        diag_action = compact_diag_observe(&compact_diag, now_ms, 1, &stall_elapsed);
+        venc_log_stall(diag_action, "valid_stream", ret, stall_elapsed,
+                       stream_export_get_last_seq(),
+                       now_ms - last_valid_stream_ms,
+                       last_valid_pts, video_pts,
+                       status.cur_packs,
+                       status.stream_info.u32PicCnt,
+                       status.stream_info.u32PicBytesNum,
+                       status.stream_info.u32MeanQp,
+                       stream_export_get_pending_count());
+        last_valid_stream_ms = now_ms;
+        if (video_pts != 0)
+            last_valid_pts = video_pts;
 
         if (!g_stream_running) {
             ret = kd_mpi_venc_release_stream(chn, &output);
@@ -243,7 +327,6 @@ void stream_thread(void *arg)
         }
 
         {
-            k_u64 video_pts = venc_stream_video_pts(&output);
             k_bool stale_drop = K_FALSE;
 
             ret = stream_freshness_observe(&freshness,
@@ -275,8 +358,9 @@ void stream_thread(void *arg)
         for (k_u32 i = 0; i < output.pack_cnt; i++) {  // 遍历所有编码包
             if (output.pack[i].type != K_VENC_HEADER) {  // 检查是否为非头部帧（即实际数据帧）
                 frame_count++;                  // 增加总帧计数
-                interval_frames++;              // 增加区间帧计数
                 total_bytes += output.pack[i].len;  // 累加数据长度
+                health_interval_frames++;
+                health_interval_bytes += output.pack[i].len;
             }
         }
 
@@ -304,30 +388,45 @@ void stream_thread(void *arg)
         if (!g_stream_running)
             break;
 
-        /* STREAM_EXPORT_LOCAL_LOG 下采集线程可能持续满速运行；主动让出调度，保证 Ctrl+C 信号路径及时执行。 */
-        rt_thread_mdelay(1);
-
-        /* 每 150 帧统计一次帧率；15fps 时约 10 秒，30fps 时约 5 秒 */
-        if (interval_frames >= 150) {           // 当区间帧数达到150时进行统计
-            time_t now = time(NULL);            // 获取当前时间
-            double elapsed = difftime(now, last_log);  // 计算时间间隔
-            double fps = (elapsed > 0) ? interval_frames / elapsed : 0;  // 计算帧率
-            LOG("=== Stats: %u frames in %.1fs, %.1f fps, total %u bytes, pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu ===",
-                interval_frames, elapsed, fps, total_bytes,
+        now_ms = venc_now_ms();
+        if (now_ms - health_interval_start_ms >=
+            COMPACT_DIAG_NORMAL_INTERVAL_MS) {
+            k_u64 health_elapsed_ms = now_ms - health_interval_start_ms;
+            double health_fps = health_elapsed_ms > 0 ?
+                (double)health_interval_frames * 1000.0 /
+                (double)health_elapsed_ms : 0.0;
+            LOG("[health:venc] uptime_s=%llu fps=%.1f interval_bytes=%u total_frames=%u total_bytes=%llu last_pts=%llu last_pts_age_ms=%llu cur_packs=%u pending=%u source_drift_ms=%lld max_drift_ms=%lld stale_drop=%llu",
+                (unsigned long long)((now_ms - stream_start_ms) / 1000ULL),
+                health_fps,
+                health_interval_bytes,
+                frame_count,
+                (unsigned long long)total_bytes,
+                (unsigned long long)last_valid_pts,
+                (unsigned long long)(now_ms - last_valid_stream_ms),
+                status.cur_packs,
                 stream_export_get_pending_count(),
                 (long long)source_drift_ms,
                 (long long)freshness.max_drift_ms,
-                (unsigned long long)freshness.stale_drop_count);  // 输出统计信息
-            interval_frames = 0;                // 重置区间帧计数器
-            last_log = now;                     // 更新上次日志时间
+                (unsigned long long)freshness.stale_drop_count);
+            health_interval_start_ms = now_ms;
+            health_interval_frames = 0;
+            health_interval_bytes = 0;
         }
+
+        /* STREAM_EXPORT_LOCAL_LOG 下采集线程可能持续满速运行；主动让出调度，保证 Ctrl+C 信号路径及时执行。 */
+        rt_thread_mdelay(1);
+
     }
 
-    time_t end_time = time(NULL);               // 获取结束时间
-    double total_elapsed = difftime(end_time, start_time);  // 计算总耗时
-    LOG("Stream thread exit. Total: %u frames, %u bytes in %.1fs (avg %.1f fps)",
-        frame_count, total_bytes, total_elapsed,  // 输出总计信息：总帧数、总字节数、总时间
-        total_elapsed > 0 ? frame_count / total_elapsed : 0);  // 计算平均帧率
+    {
+        double total_elapsed = (double)(venc_now_ms() - stream_start_ms) / 1000.0;
+
+        LOG("Stream thread exit. Total: %u frames, %llu bytes in %.1fs (avg %.1f fps)",
+            frame_count,
+            (unsigned long long)total_bytes,
+            total_elapsed,
+            total_elapsed > 0 ? frame_count / total_elapsed : 0);
+    }
 
     if (g_stream_exit_sem != RT_NULL)
         rt_sem_release(g_stream_exit_sem);

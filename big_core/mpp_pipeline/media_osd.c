@@ -31,6 +31,7 @@ static k_u64 g_osd_retry_after_ms;
 static k_u64 g_osd_request_generation;
 static k_bool g_osd_desired_visible;
 static k_bool g_osd_applied_visible;
+static k_bool g_osd_success_logged[2];
 
 /* 获取单调时间，避免系统时间调整影响 OSD 自动隐藏。 */
 static k_u64 osd_now_ms(void)
@@ -177,6 +178,7 @@ k_s32 osd_init(void)
     g_osd_request_generation = 0;
     g_osd_desired_visible = K_FALSE;
     g_osd_applied_visible = K_FALSE;
+    memset(g_osd_success_logged, 0, sizeof(g_osd_success_logged));
     g_osd_inited = K_TRUE;
     LOG("VENC 2D OSD init OK: %ux%u ARGB8888 at (%u,%u), phys=0x%llx",
         (k_u32)MOTION_DETECTED_OSD_WIDTH,
@@ -215,7 +217,7 @@ k_s32 osd_set_motion_visible(k_u32 visible, k_u32 duration_ms)
 k_s32 osd_poll_auto_hide(void)
 {
     k_s32 ret;
-    k_bool auto_hide = K_FALSE;
+    k_bool log_update;
     k_bool pending_after;
     k_bool target_visible;
     k_u64 apply_generation;
@@ -237,7 +239,6 @@ k_s32 osd_poll_auto_hide(void)
             g_osd_desired_visible = K_FALSE;
             g_osd_retry_after_ms = 0;
             g_osd_request_generation++;
-            auto_hide = K_TRUE;
         }
     }
 
@@ -269,14 +270,17 @@ k_s32 osd_poll_auto_hide(void)
     pending_after = (g_osd_desired_visible != g_osd_applied_visible);
     rt_exit_critical();
 
-    LOG("[osd:buffer] generation=%llu visible=%u cost_ms=%llu ret=0x%x pending_after=%u",
-        (unsigned long long)apply_generation,
-        (unsigned int)target_visible,
-        (unsigned long long)apply_cost_ms,
-        ret,
-        (unsigned int)pending_after);
-    if (auto_hide && !ret)
-        LOG("OSD auto hide visible=0");
+    log_update = ret || !g_osd_success_logged[target_visible ? 1 : 0];
+    if (!ret)
+        g_osd_success_logged[target_visible ? 1 : 0] = K_TRUE;
+    if (log_update) {
+        LOG("[osd:buffer] generation=%llu visible=%u cost_ms=%llu ret=0x%x pending_after=%u",
+            (unsigned long long)apply_generation,
+            (unsigned int)target_visible,
+            (unsigned long long)apply_cost_ms,
+            ret,
+            (unsigned int)pending_after);
+    }
 
     return ret;
 }
@@ -308,6 +312,7 @@ void osd_deinit(void)
     LOG("OSD buffer release done");
     memset(&g_osd_attr, 0, sizeof(g_osd_attr));
     g_osd_applied_visible = K_FALSE;
+    memset(g_osd_success_logged, 0, sizeof(g_osd_success_logged));
     g_osd_inited = K_FALSE;
     LOG("VENC 2D OSD deinit OK");
 }

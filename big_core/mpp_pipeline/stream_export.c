@@ -9,6 +9,7 @@ k_s32 nalu_ipc_submit_stream(k_u32 chn,
                              k_u32 flags);
 k_s32 nalu_ipc_flush(void);
 k_u32 nalu_ipc_get_pending_count(void);
+k_u64 nalu_ipc_get_last_submitted_seq(void);
 void nalu_ipc_deinit(void);
 
 #define LOCAL_LOG_FRAME_INTERVAL  30U
@@ -87,14 +88,8 @@ k_s32 stream_export_request_snapshot(const snapshot_request_msg *request)
     g_snapshot_request_tail = (g_snapshot_request_tail + 1U) % SNAPSHOT_PENDING_MAX;
     g_pending_snapshot_count++;
     g_snapshot_wait_frames = 0;
-    pending = g_pending_snapshot_count;
     rt_exit_critical();
 
-    LOG("Snapshot request queued: event_id=%u source_chn=%u pending=%u hint=%s",
-        req.event_id,
-        req.source_chn,
-        pending,
-        req.path_hint[0] ? req.path_hint : "motion");
     return 0;
 }
 
@@ -228,9 +223,6 @@ k_s32 stream_export_submit_venc_stream(k_u32 chn,
             snapshot_request_msg request;
 
             stream_export_consume_snapshot_request(&request);
-            LOG("Snapshot request delivered to DATAFIFO: event_id=%u reserved=0x%x",
-                request.event_id,
-                snapshot_flags);
         }
 
         *release_by_caller = K_FALSE;
@@ -276,6 +268,17 @@ k_u32 stream_export_get_pending_count(void)
         return nalu_ipc_get_pending_count();
 
     return 0;
+}
+
+k_u64 stream_export_get_last_seq(void)
+{
+    if (!g_stream_export_inited)
+        return 0;
+
+    if (g_stream_export_mode == STREAM_EXPORT_DATAFIFO)
+        return nalu_ipc_get_last_submitted_seq();
+
+    return g_stream_export_frame_count;
 }
 
 void stream_export_deinit(void)

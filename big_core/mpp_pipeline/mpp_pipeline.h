@@ -22,6 +22,7 @@
 #include "mpp_types.h"
 #include "motion_detect.h"
 #include "stream_freshness.h"
+#include "compact_diag.h"
 
 /* GC2093 传感器 (开发板标注 TYS-2093-V31)
  * SDK 示例和多数 K230 板卡把 GC2093 接在 CSI2；CSI0 配置会在 kd_mpi_vicap_init()
@@ -152,6 +153,7 @@ k_s32 stream_export_submit_venc_stream(k_u32 chn,
                                        k_bool *release_by_caller);
 void ctrl_ipc_poll(void);
 k_u32 stream_export_get_pending_count(void);
+k_u64 stream_export_get_last_seq(void);
 k_s32 stream_export_flush(void);
 void stream_export_deinit(void);
 

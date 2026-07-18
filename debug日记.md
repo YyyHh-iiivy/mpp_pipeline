@@ -63,6 +63,16 @@
 3. 小核检测到 `rtp_clock.rebase_count` 增加时，在处理当前帧前进入 `wait_for_idr`、清零随机访问跳过计数并请求缓存参数集。当前帧若含自然 IDR/CRA 可立即恢复，否则跳过普通 VCL 等待下一随机访问帧。
 4. 以上三项已通过源码规则测试和主机侧 RTP clock 测试，尚未完成板端 5 分钟压力验收，因此状态为“代码完成、板端待验证”，不能写成问题已解决。
 
+### 2026-07-18：用户十分钟运行反馈与compact日志版
+
+1. 用户确认实际连续运行约10分钟；在没有大面积画面变化时，播放延迟稳定在约330ms。为避免终端内容过长，`终端日志.md`只保存了临近结束的片段，不能据此还原完整10分钟内每个事件的精确时间线。
+2. 同一轮反馈确认一旦出现大面积画面变化仍会卡死。现象说明“运行时长本身”不是充分触发条件，大面积变化与停流存在稳定关联；它仍不能单独证明根因位于VENC、OSD、码率突发或其他具体模块。
+3. 结尾片段显示大核最后有效seq为2607，之后出现`VENC empty stream`且小核`avail_read=0`、`last_read_seq=last_read_done_seq=2607`，随后idle从504ms增长到4504ms。该片段再次把停顿边界定位在“小核已READ_DONE、上游没有新DATAFIFO消息”；由于用户在约4.5秒后手动退出，片段没有包含本次自然恢复。
+4. 同一片段的快照请求seq2577、2595均返回`cannot build stream ... params=0/0/0`和`ret=-1`。因此当前板上版本的快照标志能到达小核，但小核没有缓存到构造可播放快照所需的VPS/SPS/PPS，这两次快照没有成功入队保存。该问题本轮只保留可诊断字段，不修改快照协议或保存算法。
+5. 用户明确表示无法人工从十分钟日志中筛选若干字段。新compact日志版因此改为：正常期每60秒输出`[health:venc]/[health:ipc]/[health:small]`；连续500ms无有效stream/DATAFIFO数据后输出stall start，异常期每1秒ongoing，恢复时一条recovered。旧每秒、每15/30/150帧和正常大帧成功日志已移除。
+6. 小核同步快照失败合并为首个及每10次一条`[snapshot:fail]`，并保留`stage/seq/flags/writer/frame_irap/cached_irap/cached_gop/params`，这样无需用户筛选即可直接确认是否仍为`params=0/0/0`。
+7. compact版不改变编码、OSD、DATAFIFO协议、RTP重锁/自然IDR恢复或快照行为。正常10分钟大小核完整日志目标为不超过150行；该行数和大面积变化后的stall顺序仍需新ELF上板验证。
+
 ## 3. 证据与假设表
 
 | 状态 | 命题 | 关键证据 | 当前判断 |
@@ -74,6 +84,9 @@
 | 已确认 | 停顿恢复后 UDP 队列达到上限并 EAGAIN | `outq_after=262400`、`sndbuf_actual=262144`、`errno=11` | 网络发送路径在突发恢复时发生丢包 |
 | 已确认 | 旧恢复依赖自然 IDR | `waiting random access` 后跳过 17 个 VCL，再出现 `sent cached VPS/SPS/PPS` 和 `random access start ... IDR_W_RADL` | 丢包后参考链恢复正确，但等待期间会卡顿 |
 | 已确认 | PTS 重锁后一帧能恢复 PTS 模式 | `tests/test_rtp_clock.c` 对重锁帧断言 `pts_mode=0`，下一帧断言 `pts_mode=1` | RTP 时钟不会因一次跳变永久固定步长 |
+| 已确认 | 无大面积画面变化时可连续运行约10分钟且延迟约330ms | 用户本轮完整运行反馈；终端只截取结尾片段 | 运行时长本身不是充分触发条件 |
+| 已确认 | 本轮大面积画面变化后再次停流 | 用户现场反馈；结尾处seq停在2607，小核idle增长到4504ms且avail_read=0 | 故障仍可由大面积变化复现，具体根因未定 |
+| 已确认 | 结尾两次快照未成功保存 | seq2577/2595均为`params=0/0/0`、`cannot build stream`、`ret=-1` | 标志已到小核，但缺少可播放快照所需参数集 |
 | 已排除 | `READ_DONE` 完成等于上游 VENC 正常 | 小核 health/read_done 可正常，VENC 同时持续零 pack | 两者只能分别诊断，不能互相替代 |
 | 已排除 | 客户端断开必然是首发根因 | 已观察到 VENC 先停产、UDP 后满、播放器随后卡顿/断开 | 客户端断开通常是停流结果；仍需按具体日志顺序判断 |
 | 已排除 | 固定 `clock_drift_ms` 偏移等于延迟持续增长 | 队列恢复后 drift 可保持近似常量 | 应看 drift 的斜率和 outq，而非单个绝对值 |
@@ -90,7 +103,7 @@
 - 大核 OSD：固定 region、`osd_alpha=255`、运行期只更新素材 buffer。
 - 大核低延迟队列：`OUTPUT_BUF_CNT=3`、`NALU_IPC_PENDING_MAX=2`、`NALU_IPC_FIFO_ENTRIES=3`。
 - 小核目录：`/home/ubuntu/Downloads/k230-lightweight-video-streaming-server-main-lowlatency-v2/small_core`。
-- 小核新产物：`user/rtsp_sender_withsd_rebase_idrwait`；旧 `rtsp_sender_withsd_rtprebase` 等文件保留。
+- 小核新产物：`user/rtsp_sender_withsd_compactdiag`；旧`rtsp_sender_withsd_rebase_idrwait`、`rtsp_sender_withsd_rtprebase`等文件保留。
 - 小核 UDP：非阻塞、请求 `SO_SNDBUF=128KiB`、无 RTP packet pacing。
 
 ### 大核构建与测试
@@ -117,7 +130,7 @@ make verify
 ### 板端与播放器
 
 ```bash
-./rtsp_sender_withsd_rebase_idrwait --fifo <NALU_PHY> --ctrl-fifo <CTRL_PHY>
+./rtsp_sender_withsd_compactdiag --fifo <NALU_PHY> --ctrl-fifo <CTRL_PHY>
 ```
 
 `--ctrl-fifo` 只用于协议兼容，当前不启用主动 IDR。
@@ -131,23 +144,26 @@ ffplay -rtsp_transport udp -max_delay 0 -reorder_queue_size 0 \
 ### 关键日志指纹
 
 - 初始化：`VB init OK`、`VENC chn=0 create OK`、`VICAP init OK`、`VI->VENC bind OK`。
-- OSD：只允许 `[osd:buffer] ... ret=0x0 pending_after=0`；运行期不得出现旧 `[osd:apply]`。
-- 跨核：`NALU IPC READ_DONE`、`pending=0` 或短时 `pending=1`、小核 `age=0ms`。
+- compact版本：大小核均出现`[diag] compact_diag normal=60s stall=500ms anomaly=1s`；正常期每60秒出现`[health:venc]/[health:ipc]/[health:small]`。
+- OSD：只在首次成功显示、首次成功隐藏或失败时出现`[osd:buffer]`；运行期不得出现旧`[osd:apply]`。
+- 跨核：健康摘要中pending通常为0或短时1，`last_read_seq`应追上`last_read_done_seq`。
 - 重锁恢复：`[rtp:rebase]` -> `PTS rebase, waiting random access` -> `sent cached VPS/SPS/PPS` -> `random access start`。
 - 网络：`outq_before/outq_after` 不应持续贴近 `sndbuf_actual`，不应重复 `send queue busy`。
-- 停顿：不应持续出现 `VENC empty stream: count=25`；若出现则转向 VICAP/VENC 状态探针。
+- 停顿：以`[stall:venc]`和`[stall:small]`的start/ongoing/recovered直接关联；不再查找旧`VENC empty stream`或idle轮询行。
+- 快照：失败时`[snapshot:fail]`必须保留stage及params；当前若仍为`params=0/0/0`，表示本轮日志精简生效但快照缺参数集问题尚未修复。
 - 退出：手动停止后必须出现 `Pipeline test PASSED.`。
 
 ## 5. 本轮上板验收清单
 
-1. 连续运行至少 5 分钟，制造不少于 20 次运动事件，并包含多次大面积画面变化。
-2. 快照仍显示 motion detected 标记；每次显隐日志为 `[osd:buffer] ... ret=0x0`。
+1. 连续运行至少10分钟，制造不少于20次运动事件并包含多次大面积画面变化；直接保存大小核完整终端输出，不要求人工筛选字段。
+2. 正常10分钟大小核完整日志目标不超过150行；`[health:*]`约每60秒一次，运动事件每次一条`[event:motion]`。
 3. 运行期间不得出现旧 `[osd:apply]` 或任何运行期 VENC 2D 参数更新日志。
-4. `pending` 稳定在 0–1，DATAFIFO 帧 `age=0ms`；不得出现持续 `VENC empty stream: count=25`。
+4. pending稳定在0–1；若停流，日志应在500ms出现stall start，之后每秒ongoing，恢复时一条recovered，且大小核最后seq可直接对齐。
 5. 若发生 PTS 重锁，核对规定的四段日志顺序；自然随机访问恢复后下一帧应再次显示 `pts_mode=1`。
 6. UDP `outq` 不得持续达到实际 `SO_SNDBUF`，不得重复 `EAGAIN`。
 7. 卡顿恢复后 1s 内延迟回到正常区间，不得长期保持 1s 以上。
-8. 手动退出并确认 `Pipeline test PASSED.`。
+8. 快照成功应出现captured和实际`.h265`保存路径；若出现`[snapshot:fail] ... params=0/0/0`则单独记录为快照缺参数集问题，不与VENC停流混为一因。
+9. 手动退出并确认 `Pipeline test PASSED.`。
 
 ## 6. 经验与教训
 

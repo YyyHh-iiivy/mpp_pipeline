@@ -15,6 +15,7 @@ src = [
     'mpp_pipeline/stream_export.c',
     'mpp_pipeline/stream_nalu_ipc.c',
     'mpp_pipeline/stream_freshness.c',
+    'mpp_pipeline/compact_diag.c',
     'mpp_pipeline/media_osd.c',
     'mpp_pipeline/motion_ai_frame.c',
     'mpp_pipeline/motion_detect_default.c',

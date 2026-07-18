@@ -80,8 +80,8 @@ require_pattern "$ipc_file" 'k_u32 flags\)' \
     "DATAFIFO submit API must accept reserved flags from the export layer"
 require_pattern "$ipc_file" 'msg->reserved[[:space:]]*=[[:space:]]*flags' \
     "DATAFIFO IPC message must carry snapshot flags in reserved"
-require_pattern "$ipc_file" '\[big\] snapshot flag set seq=' \
-    "DATAFIFO backend must log when it submits a snapshot-flagged stream"
+reject_pattern "$ipc_file" '\[big\] snapshot flag set seq=' \
+    "successful snapshot flag propagation must stay quiet in compact diagnostics"
 require_pattern "$export_file" 'stream_export_request_snapshot' \
     "stream export layer must expose snapshot request queueing"
 require_pattern "$export_file" 'SNAPSHOT_PENDING_MAX[[:space:]]+4U' \
@@ -102,8 +102,8 @@ require_pattern "$venc_file" 'stream_freshness_observe' \
     "stream thread must evaluate source-frame freshness"
 require_pattern "$venc_file" 'stale_drop' \
     "stream thread must report stale-frame drops"
-require_pattern "$venc_file" 'VENC empty stream:' \
-    "stream thread must diagnose successful get_stream calls that return zero packs"
+require_pattern "$venc_file" '\[stall:venc\].*state=%s.*cause=%s' \
+    "stream thread must diagnose all no-stream causes through adaptive stall logs"
 require_pattern "$vb_file" '3\*4MB \+ 3\*1MB' \
     "VB memory comment must document the reduced VENC stream pool size"
 

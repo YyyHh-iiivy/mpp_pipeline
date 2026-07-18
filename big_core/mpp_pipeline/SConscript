@@ -15,6 +15,7 @@ src = [
     'stream_export.c',
     'stream_nalu_ipc.c',
     'stream_freshness.c',
+    'compact_diag.c',
     'media_osd.c',
     'motion_ai_frame.c',
     'motion_detect_default.c',

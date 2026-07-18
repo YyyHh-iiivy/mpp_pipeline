@@ -67,14 +67,10 @@ static void ai_motion_thread(void *arg)
 
         if (!ret && !release_ret && has_event && g_ai_motion_running && g_running) {
             k_s32 osd_ret;
+            k_s32 snapshot_ret = 0;
             snapshot_request_msg snapshot_req;
 
-            LOG("Motion detected: event_id=%u score=%u duration=%ums",
-                event.event_id, event.motion_score, event.osd_duration_ms);
             osd_ret = osd_set_motion_visible(1, event.osd_duration_ms);
-            if (osd_ret)
-                LOG("osd_set_motion_visible failed! event_id=%u ret=0x%x",
-                    event.event_id, osd_ret);
 
             if (event.request_snapshot) {
                 memset(&snapshot_req, 0, sizeof(snapshot_req));
@@ -86,11 +82,15 @@ static void ai_motion_thread(void *arg)
                          "motion-event-%u",
                          event.event_id);
 
-                ret = stream_export_request_snapshot(&snapshot_req);
-                if (ret)
-                    LOG("stream_export_request_snapshot failed! event_id=%u ret=0x%x",
-                        event.event_id, ret);
+                snapshot_ret = stream_export_request_snapshot(&snapshot_req);
             }
+
+            LOG("[event:motion] id=%u score=%u duration_ms=%u osd_ret=0x%x snapshot_ret=0x%x",
+                event.event_id,
+                event.motion_score,
+                event.osd_duration_ms,
+                osd_ret,
+                snapshot_ret);
         }
     }
 

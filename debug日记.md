@@ -34,6 +34,13 @@
 4. 已补充 SCons 单变量覆盖：`scons VENC_OSD_ENABLE=0` 生成 AI-on/OSD-off 对照 ELF。临时构建已验证指纹为 `experiment=noosd_ab`、`ai_branch=1`、`AI motion thread create OK`，且不包含 `VENC 2D OSD init OK`。
 5. 下一步必须在同一板端、使用每次启动新打印的 FIFO 地址，运行该 OSD-off ELF 进行至少10分钟和20次大面积运动对照；在获得结果前不修改默认 AI+OSD 配置。
 
+### 2026-07-18：AI-off/OSD-on 启动即停产与 OSD VB pool 隔离
+
+1. AI-off/OSD-on 对照启动指纹正确，大小核均使用 `phy_addr=0x1158c000`；大核仅编码1帧、投递到seq2后持续 `zero_pack`，`pending=0`，因此“无画面”首发仍在VENC而非FIFO地址或播放器。
+2. AI-off 时原 `vb_init()` 只有主帧和VENC stream两个公共pool；`osd_init()` 使用 `VB_INVALID_POOLID` 申请192KiB块。SDK API明确警告用户态公共pool申请会减少内核可用块，官方VENC OSD示例也为OSD配置独立pool。
+3. 本轮为OSD增加独立公共VB pool：OSD关闭时pool数量不变；OSD开启时增加一个 `OSD_BUF_CNT=1`、`OSD_BUF_SIZE=192KiB` 的精确大小pool。AI-off/OSD-on共3个pool，AI-on/OSD-on共4个pool，VENC的3块stream buffer保持不变。
+4. `osd_init()` 新增 `OSD VB block acquired: pool_id/expected_pool_index/size` 指纹，用于板端确认OSD块进入独立pool。已重新生成 `big_app_aioff_osdon.elf`，板端稳定性待验证。
+
 对照 ELF 构建使用 SCons 参数覆盖，不能只传 `CCFLAGS`（SDK 构建器不会将其稳定传播到应用对象）：
 
 ```bash

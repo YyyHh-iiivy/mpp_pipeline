@@ -12,8 +12,11 @@
  *     CHN_BUF_SIZE = (1920*1080*3/2 + 0xFFF) & ~0xFFF = 0x2F8000 ≈ 3.0 MB
  *   AI 低清旁路 buffer:
  *     AI_CHN_BUF_SIZE = ALIGN_UP(640*480*3/2, 0x1000) = 0x71000 ≈ 450 KB
+ *   OSD ARGB8888 buffer:
+ *     OSD_BUF_SIZE = ALIGN_UP(512*96*4, 0x1000) = 0x30000 = 192 KB
  *
- *   默认 AI-off: 3*4MB + 3*1MB ≈ 15 MB；启用 AI 后再增加约 2.7 MB。
+ *   主链路为 3*4MB + 3*1MB ≈ 15 MB；AI 启用后增加约 2.7 MB。
+ *   OSD 启用时再增加一个 192 KB 的独立 pool，不能消耗 VENC 的三块 stream buffer。
  * ================================================================ */
 k_s32 vb_init(void)
 {
@@ -21,7 +24,9 @@ k_s32 vb_init(void)
     k_vb_config config;
 
     memset(&config, 0, sizeof(config));
-#if AI_BRANCH_ENABLE
+#if AI_BRANCH_ENABLE && VENC_OSD_ENABLE
+    config.max_pool_cnt = 4;
+#elif AI_BRANCH_ENABLE || VENC_OSD_ENABLE
     config.max_pool_cnt = 3;
 #else
     config.max_pool_cnt = 2;
@@ -42,6 +47,13 @@ k_s32 vb_init(void)
     config.comm_pool[2].blk_cnt  = AI_BUF_CNT;
     config.comm_pool[2].blk_size = AI_CHN_BUF_SIZE;
     config.comm_pool[2].mode     = VB_REMAP_MODE_NOCACHE;
+#endif
+
+#if VENC_OSD_ENABLE
+    /* 独立 OSD pool：AI-off 时为 pool 2，AI-on 时为 pool 3。 */
+    config.comm_pool[OSD_POOL_INDEX].blk_cnt  = OSD_BUF_CNT;
+    config.comm_pool[OSD_POOL_INDEX].blk_size = OSD_BUF_SIZE;
+    config.comm_pool[OSD_POOL_INDEX].mode     = VB_REMAP_MODE_NOCACHE;
 #endif
 
     ret = kd_mpi_vb_set_config(&config);

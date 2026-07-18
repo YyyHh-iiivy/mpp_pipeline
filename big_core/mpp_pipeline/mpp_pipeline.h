@@ -66,6 +66,7 @@
 #define INPUT_BUF_CNT   3
 #define OUTPUT_BUF_CNT  3
 #define AI_BUF_CNT      6
+#define OSD_BUF_CNT     1
 
 /* 对齐宏 */
 #define ALIGN_UP(addr, size)  (((addr) + ((size) - 1U)) & (~((size) - 1U)))
@@ -74,6 +75,14 @@
 #define FRAME_BUF_SIZE   ALIGN_UP(ENC_WIDTH * ENC_HEIGHT * 2, 0xFFF)
 #define STREAM_BUF_SIZE  ALIGN_UP(ENC_WIDTH * ENC_HEIGHT / 2, 0xFFF)
 #define CHN_BUF_SIZE     ALIGN_UP(ENC_WIDTH * ENC_HEIGHT * 3 / 2, 0xFFF)
+
+/* OSD 使用独立公共 VB pool，避免用户态素材占用 VENC stream buffer。 */
+#define OSD_BUF_SIZE     ALIGN_UP(512U * 96U * 4U, 0x1000)
+#if AI_BRANCH_ENABLE
+#define OSD_POOL_INDEX   3
+#else
+#define OSD_POOL_INDEX   2
+#endif
 
 /* AI 低清旁路配置 */
 #define AI_WIDTH   AI_GRAY_MAX_WIDTH

@@ -15,7 +15,6 @@
 #define OSD_REGION_INDEX 0
 #define OSD_START_X      32
 #define OSD_START_Y      32
-#define OSD_BUF_SIZE     ALIGN_UP(MOTION_DETECTED_OSD_SIZE, 0x1000)
 
 #define OSD_HIDE_DEADLINE_GRACE_MS  20
 #define OSD_APPLY_RETRY_MS          100
@@ -24,6 +23,7 @@
 static k_bool g_osd_inited = K_FALSE;
 static k_bool g_osd_2d_attached = K_FALSE;
 static k_vb_blk_handle g_osd_block = VB_INVALID_HANDLE;
+static k_u32 g_osd_pool_id = VB_INVALID_POOLID;
 static k_u64 g_osd_phys_addr;
 static void *g_osd_virt_addr;
 static k_venc_2d_osd_attr g_osd_attr;
@@ -84,6 +84,7 @@ static void osd_release_buffer(void)
         g_osd_block = VB_INVALID_HANDLE;
     }
 
+    g_osd_pool_id = VB_INVALID_POOLID;
     g_osd_phys_addr = 0;
 }
 
@@ -103,6 +104,15 @@ k_s32 osd_init(void)
             (k_u32)OSD_BUF_SIZE);
         return -1;
     }
+
+    g_osd_pool_id = kd_mpi_vb_handle_to_pool_id(g_osd_block);
+    if (g_osd_pool_id == VB_INVALID_POOLID) {
+        LOG("kd_mpi_vb_handle_to_pool_id(OSD) failed!");
+        osd_release_buffer();
+        return -1;
+    }
+    LOG("OSD VB block acquired: pool_id=%u expected_pool_index=%u size=%u",
+        g_osd_pool_id, (k_u32)OSD_POOL_INDEX, (k_u32)OSD_BUF_SIZE);
 
     g_osd_phys_addr = kd_mpi_vb_handle_to_phyaddr(g_osd_block);
     if (!g_osd_phys_addr) {

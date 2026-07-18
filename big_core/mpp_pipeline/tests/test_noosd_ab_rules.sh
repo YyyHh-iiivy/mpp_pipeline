@@ -32,9 +32,6 @@ reject_text()
     fi
 }
 
-require_pattern "$header" \
-    '^[[:space:]]*#define[[:space:]]+VENC_OSD_ENABLE[[:space:]]+0([[:space:]]|$)' \
-    'the no-OSD A/B build must default VENC_OSD_ENABLE to 0'
 require_pattern "$pipeline_file" \
     '\[diag\] experiment=noosd_ab venc_osd=0 runtime_buffer_writes=0' \
     'the no-OSD build fingerprint is missing'

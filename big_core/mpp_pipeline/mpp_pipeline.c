@@ -56,7 +56,7 @@ int main(void)
     ret = venc_create_chn(VENC_CHN, ENC_BITRATE);
     if (ret) goto cleanup;
 
-    /* Step 3: 初始化可选 OSD；禁用实验版只调用无副作用桩函数。 */
+    /* Step 3: 初始化硬件 OSD；显式关闭宏时切换到无副作用桩。 */
     ret = osd_init();
     if (ret) goto cleanup;
 

@@ -4,6 +4,17 @@ import glob
 
 cwd = GetCurrentDir()
 
+# --- 可复现的单变量 A/B 构建覆盖 ---
+# 用 `scons AI_BRANCH_ENABLE=0` 或 `scons VENC_OSD_ENABLE=0` 生成回退 ELF，
+# 不修改源码默认宏，也不依赖外部 CCFLAGS 是否被 SDK 构建器接收。
+variant_defines = []
+for macro_name in ('AI_BRANCH_ENABLE', 'VENC_OSD_ENABLE'):
+    macro_value = ARGUMENTS.get(macro_name)
+    if macro_value is not None:
+        if macro_value not in ('0', '1'):
+            raise ValueError('%s must be 0 or 1, got %s' % (macro_name, macro_value))
+        variant_defines.append('%s=%s' % (macro_name, macro_value))
+
 # --- 源码白名单 ---
 src = [
     'mpp_pipeline/mpp_pipeline.c',
@@ -53,5 +64,7 @@ old_flags = env.get('CCFLAGS', '')
 new_flags = old_flags.replace('-Werror', '')
 env.Replace(CCFLAGS=new_flags)
 
-group = DefineGroup('big_app', src, depend=[''], CPPPATH=CPPPATH, LIBS=LIBS, LIBPATH=LIBPATH)
+group = DefineGroup('big_app', src, depend=[''], CPPPATH=CPPPATH,
+                    CPPDEFINES=variant_defines,
+                    LIBS=LIBS, LIBPATH=LIBPATH)
 Return('group')

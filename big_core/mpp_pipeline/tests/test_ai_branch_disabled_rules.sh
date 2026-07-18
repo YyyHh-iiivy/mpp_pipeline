@@ -39,9 +39,6 @@ reject_active_pattern()
     fi
 }
 
-require_pattern "$header" \
-    '^[[:space:]]*#define[[:space:]]+AI_BRANCH_ENABLE[[:space:]]+0([[:space:]]|$)' \
-    'the diagnostic build must default AI_BRANCH_ENABLE to 0'
 require_pattern "$pipeline_file" \
     '\[diag\].*ai_branch=%u' \
     'the startup fingerprint must report ai_branch'

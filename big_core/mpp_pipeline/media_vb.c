@@ -13,7 +13,7 @@
  *   AI 低清旁路 buffer:
  *     AI_CHN_BUF_SIZE = ALIGN_UP(640*480*3/2, 0x1000) = 0x71000 ≈ 450 KB
  *
- *   总内存: 3*4MB + 3*1MB + 6*450KB ≈ 17.7 MB (K230 有 512MB DDR)
+ *   默认 AI-off: 3*4MB + 3*1MB ≈ 15 MB；启用 AI 后再增加约 2.7 MB。
  * ================================================================ */
 k_s32 vb_init(void)
 {
@@ -21,7 +21,11 @@ k_s32 vb_init(void)
     k_vb_config config;
 
     memset(&config, 0, sizeof(config));
+#if AI_BRANCH_ENABLE
     config.max_pool_cnt = 3;
+#else
+    config.max_pool_cnt = 2;
+#endif
 
     /* Pool 0: 输入帧 buffer */
     config.comm_pool[0].blk_cnt  = INPUT_BUF_CNT;
@@ -33,10 +37,12 @@ k_s32 vb_init(void)
     config.comm_pool[1].blk_size = STREAM_BUF_SIZE;
     config.comm_pool[1].mode     = VB_REMAP_MODE_NOCACHE;
 
+#if AI_BRANCH_ENABLE
     /* Pool 2: AI 低清旁路帧 buffer */
     config.comm_pool[2].blk_cnt  = AI_BUF_CNT;
     config.comm_pool[2].blk_size = AI_CHN_BUF_SIZE;
     config.comm_pool[2].mode     = VB_REMAP_MODE_NOCACHE;
+#endif
 
     ret = kd_mpi_vb_set_config(&config);
     if (ret) {

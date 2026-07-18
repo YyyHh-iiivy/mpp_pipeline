@@ -12,7 +12,9 @@ void pipeline_cleanup(void)
 
     LOG("Cleanup started");
     LOG("Cleanup flow: producer-stop-before-stream-stop");
+#if AI_BRANCH_ENABLE
     ai_motion_thread_stop();
+#endif
 
     /* 5. 停 VICAP 流 */
     if (g_status >= STATUS_STREAM_STARTED) {

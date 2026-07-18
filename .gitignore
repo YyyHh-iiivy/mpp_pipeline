@@ -21,6 +21,10 @@ big_core/*
 !big_core/mpp_pipeline/
 !big_core/mpp_pipeline/**
 
+# Keep the migrated small-core sources, tests, and downloadable executables.
+!small_core/
+!small_core/**
+
 # Ignore build outputs inside mpp_pipeline if they appear there later.
 big_core/mpp_pipeline/build/
 big_core/mpp_pipeline/*.o

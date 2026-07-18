@@ -46,9 +46,10 @@ static k_s32 vicap_set_channel_attr(k_vicap_chn chn,
 }
 
 /* ================================================================
- * Step 3: VICAP (VI) 配置 1080P 主通道 + 640x480 AI 旁路
+ * Step 3: VICAP (VI) 默认只配置 1080P 主通道
  *
- * 查询传感器 → 配置 device → 配置主 channel + AI channel → init
+ * 查询传感器 → 配置 device → 配置主 channel → init
+ * AI_BRANCH_ENABLE=1 时额外配置 640x480 AI channel。
  * ================================================================ */
 /**
  * @brief 尝试配置VICAP模块以连接指定类型的传感器
@@ -105,12 +106,14 @@ k_s32 vicap_try_config(k_vicap_sensor_type sensor_type)
     if (ret)
         return ret;
 
+#if AI_BRANCH_ENABLE
     /* 3.4 配置 AI channel: 640x480，默认 NV12，AI 只读取 Y 平面 */
     ret = vicap_set_channel_attr(AI_VICAP_CHN, AI_WIDTH, AI_HEIGHT,
                                  AI_BUF_CNT, AI_CHN_BUF_SIZE,
                                  AI_PIXEL_FORMAT, K_TRUE, &dev_attr.acq_win);
     if (ret)
         return ret;
+#endif
 
     /* 3.5 初始化 VICAP */
     ret = kd_mpi_vicap_init(VICAP_DEV);           // 初始化VICAP设备

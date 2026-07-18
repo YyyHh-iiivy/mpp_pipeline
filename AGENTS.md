@@ -7,7 +7,7 @@ This repository contains K230/RT-Thread Smart C examples and the Week 1 MPP pipe
 - `big_core/`: RT-Smart big-core applications built with SCons. The active app is assembled through `big_core/SConstruct` and `big_core/SConscript`.
 - `big_core/mpp_pipeline/`: modular MPP pipeline source: VB, VICAP/VI, VENC, bind, cleanup, and shared header files.
 - `big_core/{hello,create_task,delete_task,mutex,semaphore,queue,event_group,test}/`: focused RT-Thread API demos.
-- `small_core/`: Linux small-core example built with a Makefile and Xuantie glibc toolchain.
+- `small_core/`: migrated Linux small-core RTSP/RTP sender, DATAFIFO bridge, headers, tests, notes, and downloadable executables. This workspace copy is the sole maintained source and builds with the Xuantie glibc toolchain; selected outputs under `small_core/user/` are versioned for direct GitHub download.
 - `hello_task/`: standalone big-core hello example built with a Makefile and musl toolchain.
 - `*.md` and `嵌赛睿赛德赛题.pdf`: project notes, requirements, logs, and competition reference material.
 
@@ -26,7 +26,7 @@ This produces `big_core/build/big_app.elf`. SCons uses explicit source whitelist
 Build examples:
 
 ```bash
-cd small_core && make
+cd small_core && make test && make build && make verify
 cd hello_task && make
 ```
 

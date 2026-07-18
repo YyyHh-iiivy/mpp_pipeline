@@ -26,6 +26,26 @@
 4. 主机侧源码规则、运动消抖、OSD buffer、DATAFIFO 和小核构建规则已执行；当前环境未连接 K230，阶段一的 10 分钟与阶段二的 20 次事件/10 分钟板端验收仍待现场完成。
 5. 快照继续保留现有 DATAFIFO 行为；若板端仍记录 `params=0/0/0`，单独记为快照参数集问题，不回退 AI/OSD 视频链路。
 
+### 2026-07-18：AI+OSD 默认版再次复现大面积运动停流
+
+1. 用户提供的当前 ELF 启动指纹为 `ai_branch=1`、`experiment=ai_osd_restore`、`VENC 2D OSD init OK`、`AI motion thread create OK`，确认运行的是默认 AI+OSD 版本。
+2. 日志在 seq 244 后出现 `[stall:venc] state=start cause=zero_pack`，`pending=0`、`cur_packs=0`，停流持续约 `12072ms` 后恢复；期间 AI 线程仍产生 event 6–10，故障首发不在 AI 线程退出、DATAFIFO pending 或 UDP 队列。
+3. 小核日志只在大核停流恢复后出现数据，恢复阶段未先出现持续 `send queue busy`；当前证据继续指向主 VICAP→VENC 或 VENC 2D/OSD 内部状态，尚不能单独归因于 OSD buffer 更新。
+4. 已补充 SCons 单变量覆盖：`scons VENC_OSD_ENABLE=0` 生成 AI-on/OSD-off 对照 ELF。临时构建已验证指纹为 `experiment=noosd_ab`、`ai_branch=1`、`AI motion thread create OK`，且不包含 `VENC 2D OSD init OK`。
+5. 下一步必须在同一板端、使用每次启动新打印的 FIFO 地址，运行该 OSD-off ELF 进行至少10分钟和20次大面积运动对照；在获得结果前不修改默认 AI+OSD 配置。
+
+对照 ELF 构建使用 SCons 参数覆盖，不能只传 `CCFLAGS`（SDK 构建器不会将其稳定传播到应用对象）：
+
+```bash
+cd /home/ubuntu/workspace/big_core
+RTT_EXEC_PATH="/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin" \
+  scons -c && \
+RTT_EXEC_PATH="/home/ubuntu/k230_sdk/toolchain/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin" \
+  scons -j4 VENC_OSD_ENABLE=0
+```
+
+该命令生成 AI-on/OSD-off 对照 ELF，启动必须出现 `experiment=noosd_ab`、`ai_branch=1` 和 `AI motion thread create OK`，不得出现 `VENC 2D OSD init OK`。板端验证结束后再用默认命令重建 AI+OSD ELF。
+
 ## 2. 调试时间线
 
 ### 2026-07-17：快照标记和随机接入实验

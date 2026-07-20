@@ -66,10 +66,14 @@ require_pattern "$export_file" 'SNAPSHOT_PENDING_MAX[[:space:]]+4U' \
     "snapshot request queue must hold four pending requests"
 require_pattern "$export_file" 'SNAPSHOT_WAIT_IDR_FRAMES[[:space:]]+\(VENC_GOP[[:space:]]*\+[[:space:]]*2U\)' \
     "snapshot selection must wait for an IDR/header frame before falling back"
-require_pattern "$export_file" 'kd_mpi_venc_request_idr\(req\.source_chn\)' \
-    "snapshot queueing must request an immediate IDR on the source VENC channel"
-require_pattern "$export_file" 'request IDR failed.*wait for natural IDR' \
-    "snapshot IDR request failure must log the natural-IDR fallback"
+require_pattern "$export_file" 'stream_export_has_header_pack' \
+    "snapshot selection must keep detecting natural VENC header packs"
+require_pattern "$export_file" 'has_header[[:space:]]*\|\|[[:space:]]*g_snapshot_wait_frames[[:space:]]*>=[[:space:]]*SNAPSHOT_WAIT_IDR_FRAMES' \
+    "snapshot selection must prefer a natural header and retain the frame-count fallback"
+if grep -Eq 'kd_mpi_venc_request_idr' "$export_file"; then
+    echo "stream export must not force an immediate IDR for snapshot requests"
+    exit 1
+fi
 require_pattern "$export_file" 'Snapshot mock IPC event' \
     "local-log export mode must emit a mock snapshot IPC event"
 require_pattern "$motion_thread_file" 'stream_export_request_snapshot' \
@@ -95,24 +99,6 @@ if [ "$pipeline_order" != "ok" ]; then
     exit 1
 fi
 
-snapshot_request_order=$(awk '
-    /k_s32 stream_export_request_snapshot\(/ { in_function = 1 }
-    in_function && /g_pending_snapshot_count\+\+/ { queue_line = NR }
-    in_function && /kd_mpi_venc_request_idr\(req\.source_chn\)/ { idr_line = NR }
-    in_function && /^}/ {
-        if (queue_line > 0 && idr_line > queue_line) {
-            print "ok";
-        } else {
-            print "bad";
-        }
-        exit;
-    }
-' "$export_file")
-if [ "$snapshot_request_order" != "ok" ]; then
-    echo "snapshot request must enter the queue before requesting an immediate IDR"
-    exit 1
-fi
-
 motion_event_order=$(awk '
     /static void ai_motion_thread\(/ { in_function = 1 }
     in_function && /osd_set_motion_visible\(1,/ { osd_line = NR }
@@ -127,7 +113,7 @@ motion_event_order=$(awk '
     }
 ' "$motion_thread_file")
 if [ "$motion_event_order" != "ok" ]; then
-    echo "AI motion event must show OSD before queueing and forcing the snapshot IDR"
+    echo "AI motion event must show OSD before queueing the snapshot request"
     exit 1
 fi
 

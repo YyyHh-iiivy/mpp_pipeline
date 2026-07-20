@@ -33,8 +33,9 @@ int main(void)
         STRIDE = 20
     };
     k_u8 first[STRIDE * HEIGHT];
+    k_u8 global_light_change[STRIDE * HEIGHT];
     k_u8 same_luma_changed_padding[STRIDE * HEIGHT];
-    k_u8 changed_luma[STRIDE * HEIGHT];
+    k_u8 low_contrast_motion[STRIDE * HEIGHT];
     motion_detect_result result;
     ai_gray_frame_view frame;
     k_s32 ret;
@@ -54,21 +55,30 @@ int main(void)
     EXPECT_TRUE(result.is_motion == 0, "first frame must not trigger motion");
     EXPECT_TRUE(result.motion_score == 0, "first frame score should be zero");
 
-    fill_luma(same_luma_changed_padding, STRIDE, WIDTH, HEIGHT, 40, 0xee);
+    fill_luma(global_light_change, STRIDE, WIDTH, HEIGHT, 60, 0x22);
     frame.frame_id = 2;
+    frame.y = global_light_change;
+    ret = motion_detect_process(&frame, &result);
+    EXPECT_TRUE(ret == 0, "uniform illumination change should be accepted");
+    EXPECT_TRUE(result.is_motion == 0, "uniform illumination change must be compensated");
+    EXPECT_TRUE(result.motion_score == 0, "uniform illumination change score should be zero");
+
+    fill_luma(same_luma_changed_padding, STRIDE, WIDTH, HEIGHT, 60, 0xee);
+    frame.frame_id = 3;
     frame.y = same_luma_changed_padding;
     ret = motion_detect_process(&frame, &result);
     EXPECT_TRUE(ret == 0, "same luma frame should be accepted");
     EXPECT_TRUE(result.is_motion == 0, "stride padding must not trigger motion");
     EXPECT_TRUE(result.motion_score == 0, "same luma score should be zero");
 
-    fill_luma(changed_luma, STRIDE, WIDTH, HEIGHT, 90, 0xee);
-    frame.frame_id = 3;
-    frame.y = changed_luma;
+    fill_luma(low_contrast_motion, STRIDE, WIDTH, HEIGHT, 60, 0xee);
+    low_contrast_motion[0] = 68;
+    frame.frame_id = 4;
+    frame.y = low_contrast_motion;
     ret = motion_detect_process(&frame, &result);
-    EXPECT_TRUE(ret == 0, "changed luma frame should be accepted");
-    EXPECT_TRUE(result.is_motion != 0, "large sampled luma delta should trigger motion");
-    EXPECT_TRUE(result.motion_score == 1000, "all sampled pixels changed should score 1000 permille");
+    EXPECT_TRUE(ret == 0, "low-contrast local motion frame should be accepted");
+    EXPECT_TRUE(result.is_motion != 0, "low-contrast local motion should trigger motion");
+    EXPECT_TRUE(result.motion_score > 0, "low-contrast local motion score should be positive");
 
     frame.stride = WIDTH - 1;
     ret = motion_detect_process(&frame, &result);

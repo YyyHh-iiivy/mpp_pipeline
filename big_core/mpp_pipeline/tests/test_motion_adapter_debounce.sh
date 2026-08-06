@@ -142,6 +142,7 @@ EOF
 cp "$root/big_core/mpp_pipeline/motion_adapter.c" "$tmpdir/motion_adapter.c"
 
 gcc -Wall -Wextra \
+    -DMOTION_STATE_DIAG_ENABLE=1 \
     -I"$tmpdir" \
     -I"$root/big_core/mpp_pipeline" \
     -I/home/ubuntu/k230_sdk/src/big/mpp/include \
@@ -149,4 +150,29 @@ gcc -Wall -Wextra \
     "$tmpdir/test_motion_adapter_debounce.c" \
     -o "$tmpdir/test_motion_adapter_debounce"
 
-"$tmpdir/test_motion_adapter_debounce"
+output=$("$tmpdir/test_motion_adapter_debounce")
+printf '%s\n' "$output"
+
+require_state()
+{
+    pattern=$1
+    message=$2
+
+    if ! printf '%s\n' "$output" | grep -Eq "$pattern"; then
+        echo "FAIL: $message" >&2
+        exit 1
+    fi
+}
+
+require_state '\[motion:state\].*is_motion=1.*hit=1.*clear=0.*latched=0.*reason=confirm_wait' \
+    "first hit must wait for confirmation"
+require_state '\[motion:state\].*is_motion=1.*hit=3.*clear=0.*latched=1.*reason=event' \
+    "third hit must report an event"
+require_state '\[motion:state\].*is_motion=1.*latched=1.*reason=latched' \
+    "continued motion must report latch suppression"
+require_state '\[motion:state\].*is_motion=0.*hit=0.*clear=1.*latched=1.*reason=clear_wait' \
+    "first still frame must wait for latch clear"
+require_state '\[motion:state\].*is_motion=0.*hit=0.*clear=5.*latched=0.*reason=no_motion' \
+    "fifth still frame must report the cleared latch"
+require_state '\[motion:state\].*is_motion=1.*hit=3.*latched=0.*reason=cooldown' \
+    "confirmed motion inside cooldown must report suppression"

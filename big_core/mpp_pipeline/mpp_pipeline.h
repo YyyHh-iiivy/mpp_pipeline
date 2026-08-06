@@ -38,10 +38,16 @@
 #define VENC_GOP     DST_FPS     /* 约 1 秒一个 I 帧，避免 15fps 下 GOP30 拉长到 2 秒 */
 
 /* AI 运动检测取帧节奏；从上一次取帧尝试完成后重新计时，避免追赶式突发。 */
+#ifndef AI_MOTION_ACQUIRE_FPS
 #define AI_MOTION_ACQUIRE_FPS         5
-#define AI_MOTION_ACQUIRE_INTERVAL_MS 200
+#endif
+#define AI_MOTION_ACQUIRE_INTERVAL_MS (1000U / AI_MOTION_ACQUIRE_FPS)
 #define AI_MOTION_WAIT_SLICE_MS       10
 #define AI_HEALTH_INTERVAL_MS         5000ULL
+
+#ifndef MOTION_STATE_DIAG_ENABLE
+#define MOTION_STATE_DIAG_ENABLE      0
+#endif
 
 /* VB 池配置 */
 #define INPUT_BUF_CNT   6

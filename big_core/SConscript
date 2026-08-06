@@ -4,6 +4,21 @@ import glob
 
 cwd = GetCurrentDir()
 
+# --- 可复现的运动检测 A/B 构建覆盖 ---
+variant_defines = []
+
+ai_motion_fps = ARGUMENTS.get('AI_MOTION_ACQUIRE_FPS')
+if ai_motion_fps is not None:
+    if ai_motion_fps not in ('5', '10'):
+        raise ValueError('AI_MOTION_ACQUIRE_FPS must be 5 or 10, got %s' % ai_motion_fps)
+    variant_defines.append('AI_MOTION_ACQUIRE_FPS=%s' % ai_motion_fps)
+
+motion_diag = ARGUMENTS.get('MOTION_STATE_DIAG_ENABLE')
+if motion_diag is not None:
+    if motion_diag not in ('0', '1'):
+        raise ValueError('MOTION_STATE_DIAG_ENABLE must be 0 or 1, got %s' % motion_diag)
+    variant_defines.append('MOTION_STATE_DIAG_ENABLE=%s' % motion_diag)
+
 # --- 源码白名单 ---
 src = [
     'mpp_pipeline/mpp_pipeline.c',
@@ -51,5 +66,7 @@ old_flags = env.get('CCFLAGS', '')
 new_flags = old_flags.replace('-Werror', '')
 env.Replace(CCFLAGS=new_flags)
 
-group = DefineGroup('big_app', src, depend=[''], CPPPATH=CPPPATH, LIBS=LIBS, LIBPATH=LIBPATH)
+group = DefineGroup('big_app', src, depend=[''], CPPPATH=CPPPATH,
+                    CPPDEFINES=variant_defines,
+                    LIBS=LIBS, LIBPATH=LIBPATH)
 Return('group')

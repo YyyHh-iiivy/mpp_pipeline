@@ -139,11 +139,12 @@ static void ai_motion_thread(void *arg)
     (void)arg;
     ai_motion_stats_init(&stats);
     LOG("AI motion thread started");
-    LOG("AI motion acquire config: dump_fps=%u process_fps=%u interval_ms=%u wait_slice_ms=%u",
+    LOG("AI motion acquire config: dump_fps=%u process_fps=%u interval_ms=%u wait_slice_ms=%u state_diag=%u",
         (k_u32)AI_MOTION_ACQUIRE_FPS,
         (k_u32)AI_MOTION_ACQUIRE_FPS,
         (k_u32)AI_MOTION_ACQUIRE_INTERVAL_MS,
-        (k_u32)AI_MOTION_WAIT_SLICE_MS);
+        (k_u32)AI_MOTION_WAIT_SLICE_MS,
+        (k_u32)MOTION_STATE_DIAG_ENABLE);
 
     while (g_ai_motion_running && g_running) {
         k_s32 ret;

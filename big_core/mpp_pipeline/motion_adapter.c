@@ -12,6 +12,24 @@ static k_u32 g_motion_clear_frames;
 static k_bool g_motion_latched;
 static k_u64 g_last_motion_event_ms;
 
+#if MOTION_STATE_DIAG_ENABLE
+static void motion_adapter_log_state(const ai_gray_frame_view *frame,
+                                     const motion_detect_result *result,
+                                     const char *reason)
+{
+    LOG("[motion:state] frame=%llu score=%u is_motion=%u hit=%u clear=%u latched=%u reason=%s",
+        (unsigned long long)frame->frame_id,
+        result->motion_score,
+        result->is_motion,
+        g_motion_hit_frames,
+        g_motion_clear_frames,
+        g_motion_latched,
+        reason);
+}
+#else
+#define motion_adapter_log_state(frame, result, reason) ((void)0)
+#endif
+
 static k_u64 motion_now_ms(void)
 {
     struct timespec ts;
@@ -69,19 +87,28 @@ k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
         if (g_motion_clear_frames >= MOTION_CLEAR_FRAMES)
             g_motion_latched = K_FALSE;
 
+        motion_adapter_log_state(frame,
+                                 &result,
+                                 g_motion_latched ? "clear_wait" : "no_motion");
         return 0;
     }
 
-    if (g_motion_hit_frames < MOTION_CONFIRM_FRAMES)
+    if (g_motion_hit_frames < MOTION_CONFIRM_FRAMES) {
+        motion_adapter_log_state(frame, &result, "confirm_wait");
         return 0;
+    }
 
-    if (g_motion_latched)
+    if (g_motion_latched) {
+        motion_adapter_log_state(frame, &result, "latched");
         return 0;
+    }
 
     now = motion_now_ms();
     if (g_last_motion_event_ms != 0 &&
-        now - g_last_motion_event_ms < MOTION_COOLDOWN_MS)
+        now - g_last_motion_event_ms < MOTION_COOLDOWN_MS) {
+        motion_adapter_log_state(frame, &result, "cooldown");
         return 0;
+    }
 
     event->event_id = ++g_motion_event_id;
     event->detect_time_ms = now;
@@ -91,6 +118,7 @@ k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
     *has_event = K_TRUE;
     g_motion_latched = K_TRUE;
     g_last_motion_event_ms = event->detect_time_ms;
+    motion_adapter_log_state(frame, &result, "event");
 
     return 0;
 }

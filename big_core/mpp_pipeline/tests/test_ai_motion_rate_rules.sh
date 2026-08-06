@@ -29,11 +29,14 @@ reject_pattern() {
 }
 
 require_pattern "$header" \
+    '^[[:space:]]*#ifndef[[:space:]]+AI_MOTION_ACQUIRE_FPS' \
+    "AI motion acquisition FPS must be overridable"
+require_pattern "$header" \
     '^[[:space:]]*#define[[:space:]]+AI_MOTION_ACQUIRE_FPS[[:space:]]+5([[:space:]]|$)' \
     "AI motion acquisition FPS must be 5"
 require_pattern "$header" \
-    '^[[:space:]]*#define[[:space:]]+AI_MOTION_ACQUIRE_INTERVAL_MS[[:space:]]+200([[:space:]]|$)' \
-    "AI motion acquisition interval must be 200ms"
+    'AI_MOTION_ACQUIRE_INTERVAL_MS[[:space:]]+\(1000U[[:space:]]*/[[:space:]]*AI_MOTION_ACQUIRE_FPS\)' \
+    "AI motion acquisition interval must derive from FPS"
 require_pattern "$header" \
     '^[[:space:]]*#define[[:space:]]+AI_MOTION_WAIT_SLICE_MS[[:space:]]+10([[:space:]]|$)' \
     "AI motion wait slices must be 10ms"

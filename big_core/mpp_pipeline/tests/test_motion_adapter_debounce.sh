@@ -35,6 +35,7 @@ static int g_failures;
 static motion_detect_result g_results[16];
 static unsigned int g_result_count;
 static unsigned int g_result_index;
+static k_u64 g_now_ms;
 
 #define EXPECT_TRUE(cond, msg) \
     do { \
@@ -48,6 +49,20 @@ static void set_result(unsigned int index, k_u32 is_motion, k_u32 score)
 {
     g_results[index].is_motion = is_motion;
     g_results[index].motion_score = score;
+}
+
+int test_clock_gettime(clockid_t clock_id, struct timespec *ts)
+{
+    (void)clock_id;
+
+    ts->tv_sec = (time_t)(g_now_ms / 1000ULL);
+    ts->tv_nsec = (long)((g_now_ms % 1000ULL) * 1000000ULL);
+    return 0;
+}
+
+static void set_now_ms(k_u64 now_ms)
+{
+    g_now_ms = now_ms;
 }
 
 k_s32 motion_detect_process(const ai_gray_frame_view *frame,
@@ -90,19 +105,18 @@ int main(void)
     frame.stride = 1;
     frame.y = &dummy_luma;
 
-    for (i = 0; i < 3; ++i)
+    for (i = 0; i < 5; ++i)
         set_result(i, K_TRUE, 42);
-    for (i = 3; i < 6; ++i)
-        set_result(i, K_TRUE, 77);
-    for (i = 6; i < 11; ++i)
+    for (i = 5; i < 10; ++i)
         set_result(i, K_FALSE, 0);
-    for (i = 11; i < 14; ++i)
+    for (i = 10; i < 13; ++i)
         set_result(i, K_TRUE, 88);
-    g_result_count = 14;
+    g_result_count = 13;
 
     ret = motion_adapter_init();
     EXPECT_TRUE(ret == 0, "motion_adapter_init should succeed");
 
+    set_now_ms(1000);
     run_one(&frame, K_FALSE, "first motion frame should not trigger event");
     run_one(&frame, K_FALSE, "second motion frame should not trigger event");
 
@@ -116,16 +130,38 @@ int main(void)
     EXPECT_TRUE(event.osd_duration_ms == 1000, "event should keep 1000ms OSD duration");
     EXPECT_TRUE(event.request_snapshot == 1, "motion event should request snapshot");
 
-    run_one(&frame, K_FALSE, "latched motion should not trigger event 1");
-    run_one(&frame, K_FALSE, "latched motion should not trigger event 2");
-    run_one(&frame, K_FALSE, "latched motion should not trigger event 3");
+    set_now_ms(4999);
+    run_one(&frame, K_FALSE, "continued motion before 4000ms should not retrigger");
+
+    set_now_ms(5000);
+    memset(&event, 0, sizeof(event));
+    has_event = K_FALSE;
+    ret = motion_adapter_process(&frame, &event, &has_event);
+    EXPECT_TRUE(ret == 0, "continued motion at 4000ms should be accepted");
+    EXPECT_TRUE(has_event == K_TRUE,
+                "continued motion at 4000ms should trigger periodic event");
+    EXPECT_TRUE(event.event_id == 2, "periodic event id should be 2");
+    EXPECT_TRUE(event.motion_score == 42,
+                "periodic event should carry the current detector score");
+    EXPECT_TRUE(event.osd_duration_ms == 1000,
+                "periodic event should keep 1000ms OSD duration");
+    EXPECT_TRUE(event.request_snapshot == 1,
+                "periodic motion event should request snapshot");
 
     for (i = 0; i < 5; ++i)
-        run_one(&frame, K_FALSE, "still frames should clear latch without event");
+        run_one(&frame, K_FALSE, "still frames should end motion segment without event");
 
-    run_one(&frame, K_FALSE, "cooldown first motion frame should not trigger");
-    run_one(&frame, K_FALSE, "cooldown second motion frame should not trigger");
-    run_one(&frame, K_FALSE, "cooldown suppresses immediate retrigger");
+    set_now_ms(5100);
+    run_one(&frame, K_FALSE, "new segment first motion frame should not trigger");
+    run_one(&frame, K_FALSE, "new segment second motion frame should not trigger");
+
+    memset(&event, 0, sizeof(event));
+    has_event = K_FALSE;
+    ret = motion_adapter_process(&frame, &event, &has_event);
+    EXPECT_TRUE(ret == 0, "new segment third motion frame should be accepted");
+    EXPECT_TRUE(has_event == K_TRUE,
+                "new segment should trigger without waiting for old 4000ms period");
+    EXPECT_TRUE(event.event_id == 3, "new segment event id should be 3");
 
     motion_adapter_deinit();
 
@@ -143,11 +179,24 @@ cp "$root/big_core/mpp_pipeline/motion_adapter.c" "$tmpdir/motion_adapter.c"
 
 gcc -Wall -Wextra \
     -DMOTION_STATE_DIAG_ENABLE=1 \
+    -Dclock_gettime=test_clock_gettime \
     -I"$tmpdir" \
     -I"$root/big_core/mpp_pipeline" \
     -I/home/ubuntu/k230_sdk/src/big/mpp/include \
-    "$tmpdir/motion_adapter.c" \
-    "$tmpdir/test_motion_adapter_debounce.c" \
+    -c "$tmpdir/motion_adapter.c" \
+    -o "$tmpdir/motion_adapter.o"
+
+gcc -Wall -Wextra \
+    -DMOTION_STATE_DIAG_ENABLE=1 \
+    -I"$tmpdir" \
+    -I"$root/big_core/mpp_pipeline" \
+    -I/home/ubuntu/k230_sdk/src/big/mpp/include \
+    -c "$tmpdir/test_motion_adapter_debounce.c" \
+    -o "$tmpdir/test_motion_adapter_debounce.o"
+
+gcc \
+    "$tmpdir/motion_adapter.o" \
+    "$tmpdir/test_motion_adapter_debounce.o" \
     -o "$tmpdir/test_motion_adapter_debounce"
 
 output=$("$tmpdir/test_motion_adapter_debounce")
@@ -164,15 +213,13 @@ require_state()
     fi
 }
 
-require_state '\[motion:state\].*is_motion=1.*hit=1.*clear=0.*latched=0.*reason=confirm_wait' \
+require_state '\[motion:state\].*is_motion=1.*hit=1.*clear=0.*active=0.*reason=confirm_wait' \
     "first hit must wait for confirmation"
-require_state '\[motion:state\].*is_motion=1.*hit=3.*clear=0.*latched=1.*reason=event' \
+require_state '\[motion:state\].*is_motion=1.*hit=3.*clear=0.*active=1.*reason=event' \
     "third hit must report an event"
-require_state '\[motion:state\].*is_motion=1.*latched=1.*reason=latched' \
-    "continued motion must report latch suppression"
-require_state '\[motion:state\].*is_motion=0.*hit=0.*clear=1.*latched=1.*reason=clear_wait' \
-    "first still frame must wait for latch clear"
-require_state '\[motion:state\].*is_motion=0.*hit=0.*clear=5.*latched=0.*reason=no_motion' \
-    "fifth still frame must report the cleared latch"
-require_state '\[motion:state\].*is_motion=1.*hit=3.*latched=0.*reason=cooldown' \
-    "confirmed motion inside cooldown must report suppression"
+require_state '\[motion:state\].*is_motion=1.*hit=3.*active=1.*reason=period_wait' \
+    "continued motion before 4000ms must report periodic wait"
+require_state '\[motion:state\].*is_motion=0.*hit=0.*clear=1.*active=1.*reason=clear_wait' \
+    "first still frame must wait for motion segment end"
+require_state '\[motion:state\].*is_motion=0.*hit=0.*clear=5.*active=0.*reason=no_motion' \
+    "fifth still frame must report the ended motion segment"

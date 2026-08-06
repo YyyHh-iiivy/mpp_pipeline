@@ -3,13 +3,13 @@
 
 #define MOTION_CONFIRM_FRAMES   3U
 #define MOTION_CLEAR_FRAMES     5U
-#define MOTION_COOLDOWN_MS      1000U
+#define MOTION_EVENT_PERIOD_MS  4000U
 #define MOTION_OSD_DURATION_MS  1000U
 
 static k_u32 g_motion_event_id;
 static k_u32 g_motion_hit_frames;
 static k_u32 g_motion_clear_frames;
-static k_bool g_motion_latched;
+static k_bool g_motion_active;
 static k_u64 g_last_motion_event_ms;
 
 #if MOTION_STATE_DIAG_ENABLE
@@ -17,13 +17,13 @@ static void motion_adapter_log_state(const ai_gray_frame_view *frame,
                                      const motion_detect_result *result,
                                      const char *reason)
 {
-    LOG("[motion:state] frame=%llu score=%u is_motion=%u hit=%u clear=%u latched=%u reason=%s",
+    LOG("[motion:state] frame=%llu score=%u is_motion=%u hit=%u clear=%u active=%u reason=%s",
         (unsigned long long)frame->frame_id,
         result->motion_score,
         result->is_motion,
         g_motion_hit_frames,
         g_motion_clear_frames,
-        g_motion_latched,
+        g_motion_active,
         reason);
 }
 #else
@@ -43,7 +43,7 @@ k_s32 motion_adapter_init(void)
     g_motion_event_id = 0;
     g_motion_hit_frames = 0;
     g_motion_clear_frames = 0;
-    g_motion_latched = K_FALSE;
+    g_motion_active = K_FALSE;
     g_last_motion_event_ms = 0;
     LOG("Motion adapter ready");
     return 0;
@@ -85,11 +85,11 @@ k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
         if (g_motion_clear_frames < MOTION_CLEAR_FRAMES)
             g_motion_clear_frames++;
         if (g_motion_clear_frames >= MOTION_CLEAR_FRAMES)
-            g_motion_latched = K_FALSE;
+            g_motion_active = K_FALSE;
 
         motion_adapter_log_state(frame,
                                  &result,
-                                 g_motion_latched ? "clear_wait" : "no_motion");
+                                 g_motion_active ? "clear_wait" : "no_motion");
         return 0;
     }
 
@@ -98,15 +98,10 @@ k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
         return 0;
     }
 
-    if (g_motion_latched) {
-        motion_adapter_log_state(frame, &result, "latched");
-        return 0;
-    }
-
     now = motion_now_ms();
-    if (g_last_motion_event_ms != 0 &&
-        now - g_last_motion_event_ms < MOTION_COOLDOWN_MS) {
-        motion_adapter_log_state(frame, &result, "cooldown");
+    if (g_motion_active &&
+        now - g_last_motion_event_ms < MOTION_EVENT_PERIOD_MS) {
+        motion_adapter_log_state(frame, &result, "period_wait");
         return 0;
     }
 
@@ -116,7 +111,7 @@ k_s32 motion_adapter_process(const ai_gray_frame_view *frame,
     event->osd_duration_ms = MOTION_OSD_DURATION_MS;
     event->request_snapshot = 1;
     *has_event = K_TRUE;
-    g_motion_latched = K_TRUE;
+    g_motion_active = K_TRUE;
     g_last_motion_event_ms = event->detect_time_ms;
     motion_adapter_log_state(frame, &result, "event");
 

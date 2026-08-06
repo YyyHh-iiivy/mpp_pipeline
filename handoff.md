@@ -13,7 +13,8 @@
 - 主视频目标：`1080p@15fps`，端到端延迟稳定 `<300ms`。
 - AI 当前稳定版本：取帧前限频，实际约 `4.6~4.7fps`，保留连续 3 帧确认。
 - 最新板测：连续约 742 秒，端到端延迟约 `240ms`；AI `dump_fps/process_fps=4.6~4.7`，`dump_fail=0`、`release_fail=0`，主 VENC 约 `14.8fps`，pending 稳定，无持续积压。
-- 最新问题：首次持续运动约 2 秒仍不容易触发，尚未证明是采样间隔、连续确认还是状态机复位问题。
+- 最新问题：5fps 逐帧日志证明算法持续输出运动，但旧锁存状态抑制了同一运动段的后续 `Motion detected` 日志；短运动也可能在 3 帧确认前被静止样本打断。
+- 最新状态机决策：删除“一段持续运动只发送一次”的锁存行为；同一运动段首次确认立即触发，之后每隔 `4000ms` 触发一次 OSD 和快照，连续 5 帧静止结束运动段后，新运动段立即重新触发。
 
 ## 3. 已确认事实
 
@@ -53,8 +54,8 @@
 
 - 默认性能构建保持 `MOTION_STATE_DIAG_ENABLE=0`、`AI_MOTION_ACQUIRE_FPS=5`。
 - 诊断构建通过 SCons 参数开启：`MOTION_STATE_DIAG_ENABLE=1`；FPS 只允许选择 `5` 或 `10`，间隔分别为 `200ms` 或 `100ms`。
-- 先做 5fps 短测：`静止5秒 -> 持续运动2秒 -> 静止5秒 -> 持续运动2秒`，每个样本记录 `frame/score/is_motion/hit/clear/latched/reason`。
-- 只有 `confirm_wait` 被 `no_motion` 反复清零时才进入 10fps；若 `latched/clear_wait` 主导，则停止升频，重新设计锁存复位策略。
+- 先做 5fps 短测：`静止5秒 -> 持续运动12秒 -> 静止5秒 -> 持续运动2秒`，每个样本记录 `frame/score/is_motion/hit/clear/active/reason`，验证持续运动约在 `0s、4s、8s` 产生事件。
+- `period_wait` 表示持续运动尚未到下一个 4 秒周期；`clear_wait` 表示运动段尚未结束；不再使用 `latched` 或 `cooldown` 作为当前状态机原因。
 - 10fps 灵敏度测试重复 10 次，至少 9 次触发才算恢复；随后关闭详细诊断运行 10 分钟，要求实际 AI 约 `9~10fps` 且主视频 `<300ms`。
 
 ## 7. 诊断构建命令
@@ -62,7 +63,7 @@
 当前待上板产物：`big_core/big_app.elf`，配置为 `AI_MOTION_ACQUIRE_FPS=5`、`MOTION_STATE_DIAG_ENABLE=1`，SHA256：
 
 ```text
-5bcc5b3f61f0ad9d3f663a8cfd2f91e1785f34d100f9f54d6c8af0fae35b451e
+81bb1ca0046f4d81e26d9b9fcb655c3def891d53eb238d77e1a82d6fc38154e2
 ```
 
 ```bash
@@ -95,6 +96,7 @@ sha256sum big_app.elf
 - 正常运行时 `dump_fail`、`release_fail` 不持续增加，`last_frame_age_ms` 不异常增长。
 - 主 VENC 维持约 15fps，DATAFIFO pending 不长期占满。
 - 5fps 连续运动理论响应约 `400~600ms`；10fps 试验要求 10 次规定动作至少 9 次触发，OSD 和快照路径仍工作。
+- 5fps 周期事件验收：持续运动 12 秒应产生约 3 次事件，OSD 每次显示 1 秒，快照请求每次入队一次；静止 5 秒后新运动段应在 3 帧确认后立即触发。
 - Ctrl+C 后出现完整 cleanup 和 `Pipeline test PASSED.`。
 
 需要保存的板端日志：
@@ -125,12 +127,12 @@ sha256sum big_app.elf
 ## 11. 待讨论的架构问题
 
 - AI 旁路是否需要继续保持 `640x480`，还是可在不损失检出率的前提下降到更小分辨率。
-- 5fps 是否满足最终比赛场景；板测稳定后再决定是否尝试 8fps 或 10fps。
-- `motion_adapter` 的连续帧确认是否应改为基于时间，以避免检测 FPS 改变事件语义。
+- 5fps 是否满足最终比赛场景；周期事件验证稳定后再决定是否尝试 8fps 或 10fps。
+- `motion_adapter` 的连续 3 帧确认和连续 5 帧静止结束仍是帧数语义；若后续切换 FPS，需要重新评估其时间响应。
 - OSD deadline 应归属独立控制模块还是 stream 线程安全点。
 - 快照等待超过 `VENC_GOP + 2` 后标记非 Header stream 是否满足小核快照解码契约。
 - cleanup 状态是否需要覆盖 AI、OSD、export 和 stream thread 的独立初始化状态。
 
 ## 12. 下一次对话入口
 
-下一次优先提供：5fps 逐帧诊断日志、板端实际运行 ELF 的 SHA256、规定动作的触发次数，以及 `[health:ai]`、stream `pending=`、DATAFIFO age/drop 指标。先按 `reason` 判断是确认计数被清零还是锁存阻止，再决定是否进入 10fps A/B。
+下一次优先提供：新状态机 5fps ELF 的 SHA256、持续运动 12 秒的事件次数与事件时间、静止后新运动段触发结果，以及 `[health:ai]`、stream `pending=`、DATAFIFO age/drop 指标。先验证 4 秒周期事件不增加延迟和队列积压，再决定是否进入 10fps A/B。
